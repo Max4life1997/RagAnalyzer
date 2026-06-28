@@ -9,159 +9,144 @@
 </head>
 <body>
 <div class="app-shell">
+
+    <!-- ─── Левый сайдбар ─── -->
     <aside class="sidebar" id="navSidebar">
         <div class="sidebar__logo">
             <div class="logo-badge">R</div>
-            <div class="logo-text">RagAnalyzer</div>
+            <div class="sidebar__label">RagAnalyzer</div>
         </div>
 
-        <nav class="sidebar__nav">
-            <button class="nav-item nav-item--active" data-view="documentsView">
-                Документы
-            </button>
-            <button class="nav-item" data-view="chatView">
-                Чат
-            </button>
-        </nav>
+        <button id="newChatBtn" class="sidebar__new-chat">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                <path d="M12.5 1.5a1.5 1.5 0 0 1 2.121 2.121L5.5 12.743l-3 .757.757-3L12.5 1.5z"
+                      stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="sidebar__label">Новый чат</span>
+        </button>
 
-        <button class="sidebar__toggle" id="navSidebarToggle" title="Свернуть панель">
+        <div class="sidebar__chats">
+            <div class="sidebar__chats-label"><span class="sidebar__label">Чаты</span></div>
+            <div id="chatsList" class="sidebar__chats-list"></div>
+        </div>
+
+        <button class="sidebar__toggle" id="navSidebarToggle" title="Свернуть">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <path d="M9 2L4 7L9 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M9 2L4 7L9 12" stroke="currentColor" stroke-width="1.8"
+                      stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
         </button>
     </aside>
 
+    <!-- ─── Основной контент ─── -->
     <main class="main-content">
-        <header class="topbar">
-            <div>
-                <h1 class="topbar__title">RagAnalyzer</h1>
-                <p class="topbar__subtitle">RAG чат по выбранным документам</p>
-            </div>
-        </header>
-
-        <!-- Экран документов -->
-        <section id="documentsView" class="view view--active">
-            <div class="panel">
-                <div class="panel__header">
-                    <div>
-                        <h2>Загруженные документы</h2>
-                        <p>Выберите один или несколько документов для начала чата</p>
-                    </div>
-
-                    <div class="panel__actions">
-                        <button id="refreshDocumentsBtn" class="btn btn--secondary">Обновить</button>
-                        <button id="startChatBtn" class="btn btn--primary" disabled>Начать чат</button>
-                    </div>
-                </div>
-
-                <div class="documents-toolbar">
-                    <div id="dropzone" class="dropzone">
-                        <input id="fileInput" type="file" accept=".pdf,.txt,.docx" multiple hidden />
-                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-                        </svg>
-                        <div class="dropzone__text">Перетащите файл или <span class="dropzone__link">нажмите для выбора</span></div>
-                        <div class="dropzone__hint">.pdf, .txt, .docx — до 20 МБ</div>
-                    </div>
-                    <div id="uploadStatus" class="upload-status" hidden></div>
-                    <input
-                            id="searchInput"
-                            class="input"
-                            type="text"
-                            placeholder="Поиск по названию файла..."
-                    />
-                </div>
-
-                <div class="documents-table-wrapper">
-                    <table class="documents-table">
-                        <thead>
-                        <tr>
-                            <th></th>
-                            <th>Документ</th>
-                            <th>Статус</th>
-                            <th>Размер</th>
-                            <th>Чанки</th>
-                            <th>Дата</th>
-                            <th></th>
-                        </tr>
-                        </thead>
-                        <tbody id="documentsTableBody"></tbody>
-                    </table>
-                </div>
-
-                <div class="selection-bar">
-                    <div>
-                        <strong id="selectedCount">Выбрано: 0</strong>
-                    </div>
-                    <button id="clearSelectionBtn" class="btn btn--ghost">Очистить выбор</button>
-                </div>
-            </div>
-        </section>
 
         <!-- Экран чата -->
-        <section id="chatView" class="view">
-            <div class="chat-layout" id="chatLayout">
+        <div class="chat-layout">
+            <div class="chat-main panel">
 
-                <div class="chat-sidebar panel" id="chatSidebar">
-                    <button class="chat-sidebar__toggle" id="chatSidebarToggle" title="Свернуть панель документов">
-                        <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
-                            <path d="M9 2L4 7L9 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                <!-- Шапка: название чата + кнопка документов -->
+                <div class="chat-header">
+                    <div class="chat-header__title-wrap">
+                        <h2 id="chatTitle" class="chat-header__title">RagAnalyzer</h2>
+                        <p class="chat-header__subtitle">Выберите документы и начните диалог</p>
+                    </div>
+                    <button id="docsBtn" class="chat-header__docs-btn">
+                        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                            <path d="M3 2h7l3 3v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"
+                                  stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+                            <path d="M10 2v4h3" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
                         </svg>
+                        <span id="docsBtnLabel">Документы</span>
                     </button>
+                </div>
 
-                    <div class="chat-sidebar__inner">
-                        <div class="panel__header panel__header--column">
-                            <h2>Выбранные документы</h2>
-                            <p>Ответы будут строиться только по этим файлам</p>
-                        </div>
-
-                        <div id="selectedDocumentsList" class="selected-documents-list"></div>
-
-                        <div class="chat-sidebar__footer">
-                            <button id="changeDocumentsBtn" class="btn btn--secondary btn--full">
-                                Сменить документы
-                            </button>
-                        </div>
+                <!-- Сообщения -->
+                <div id="chatMessages" class="chat-messages">
+                    <div class="empty-chat">
+                        <div class="empty-chat__title">Добро пожаловать</div>
+                        <div class="empty-chat__text">Нажмите «Новый чат» чтобы начать</div>
                     </div>
                 </div>
 
-                <div class="chat-main panel">
-                    <div class="panel__header">
-                        <div>
-                            <h2>Чат по документам</h2>
-                            <p>Задавайте вопросы по выбранным документам</p>
-                        </div>
-                    </div>
-
-                    <div id="chatMessages" class="chat-messages">
-                        <div class="empty-chat">
-                            <div class="empty-chat__title">Чат готов</div>
-                            <div class="empty-chat__text">Выберите документы и задайте первый вопрос</div>
-                        </div>
-                    </div>
-
-                    <div class="chat-input-area">
-                        <div class="chat-input-wrap">
-                            <textarea
-                                    id="questionInput"
-                                    class="textarea"
-                                    placeholder="Введите вопрос по выбранным документам..."
-                                    rows="1"
-                            ></textarea>
-                            <button id="sendQuestionBtn" class="btn--send" title="Отправить">
-                                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                                    <path d="M14 8L2 2l2.5 6L2 14l12-6z" fill="currentColor"/>
-                                </svg>
-                            </button>
-                        </div>
+                <!-- Поле ввода -->
+                <div class="chat-input-area">
+                    <div class="chat-input-wrap">
+                        <textarea id="questionInput" class="textarea"
+                                  placeholder="Введите вопрос по выбранным документам..."
+                                  rows="1"></textarea>
+                        <button id="sendQuestionBtn" class="btn--send" title="Отправить">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                                <path d="M14 8L2 2l2.5 6L2 14l12-6z" fill="currentColor"/>
+                            </svg>
+                        </button>
                     </div>
                 </div>
-
             </div>
-        </section>
+        </div>
+
     </main>
 </div>
 
+<!-- ─── Модальное окно документов ─── -->
+<div id="docsModal" class="modal" hidden>
+    <div class="modal__backdrop" id="docsModalBackdrop"></div>
+    <div class="modal__box">
+        <div class="modal__header">
+            <h2 class="modal__title">Документы</h2>
+            <button id="docsModalClose" class="modal__close" title="Закрыть">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Загрузка -->
+        <div id="dropzone" class="dropzone">
+            <input id="fileInput" type="file" accept=".pdf,.txt,.docx" multiple hidden />
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            <div class="dropzone__text">Перетащите файл или <span class="dropzone__link">нажмите для выбора</span></div>
+            <div class="dropzone__hint">.pdf, .txt, .docx — до 20 МБ</div>
+        </div>
+        <div id="uploadStatus" class="upload-status" hidden></div>
+
+        <!-- Поиск -->
+        <input id="searchInput" class="input modal__search" type="text" placeholder="Поиск по названию..."/>
+
+        <!-- Таблица документов -->
+        <div class="modal__table-wrap">
+            <table class="documents-table">
+                <thead>
+                <tr>
+                    <th></th>
+                    <th>Документ</th>
+                    <th>Статус</th>
+                    <th>Чанки</th>
+                    <th>Дата</th>
+                    <th></th>
+                </tr>
+                </thead>
+                <tbody id="documentsTableBody"></tbody>
+            </table>
+        </div>
+
+        <!-- Футер -->
+        <div class="modal__footer">
+            <span id="selectedCount" class="modal__count">Выбрано: 0</span>
+            <div class="modal__footer-actions">
+                <button id="clearSelectionBtn" class="btn btn--ghost">Сбросить</button>
+                <button id="applyDocsBtn" class="btn btn--primary">Применить</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Библиотеки (глобальные, не модульные) -->
 <script src="/js/marked.min.js"></script>
 <script src="/js/prism.min.js"></script>
 <script src="/js/prism-markup.min.js"></script>
@@ -172,6 +157,7 @@
 <script src="/js/prism-sql.min.js"></script>
 <script src="/js/prism-bash.min.js"></script>
 <script src="/js/prism-json.min.js"></script>
-<script src="/js/app.js"></script>
+<!-- Приложение (ES-модули) -->
+<script type="module" src="/js/app.js"></script>
 </body>
 </html>

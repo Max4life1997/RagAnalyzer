@@ -36,9 +36,9 @@ app:
 ollama:
   base-url: http://localhost:11434
   embedding-model: nomic-embed-text:latest
-  chat-model: llama3.2:3b
+  chat-model: qwen2.5:7b
 
 rag:
   search:
-    top-k: 5
-    max-distance: 0.75
+    top-k: 8
+    max-distance: 0.9

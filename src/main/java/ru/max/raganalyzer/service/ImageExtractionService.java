@@ -15,11 +15,15 @@ import ru.max.raganalyzer.repository.DocumentImageRepository;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -57,6 +61,7 @@ public class ImageExtractionService {
         }
 
         List<DocumentImageEntity> saved = new ArrayList<>();
+        Set<String> seenHashes = new HashSet<>(); // дедупликация по содержимому
 
         try (PDDocument pdf = Loader.loadPDF(pdfPath.toAbsolutePath().toFile())) {
             int pageNumber = 1;
@@ -66,15 +71,18 @@ public class ImageExtractionService {
 
                 int imageIndex = 0;
                 for (BufferedImage image : pageImages) {
-                    String fileName2 = "%d_%d.png".formatted(pageNumber, imageIndex);
-                    Path imagePath = docImagesDir.resolve(fileName2);
+                    String hash = imageHash(image);
+                    if (hash != null && !seenHashes.add(hash)) {
+                        continue; // уже видели это изображение — пропускаем
+                    }
 
+                    String imageFile = "%d_%d.png".formatted(pageNumber, imageIndex);
+                    Path imagePath = docImagesDir.resolve(imageFile);
                     ImageIO.write(image, "PNG", imagePath.toFile());
 
-                    DocumentImageEntity entity = new DocumentImageEntity(
-                            document, pageNumber, imageIndex, imagePath.toString()
-                    );
-                    saved.add(documentImageRepository.save(entity));
+                    saved.add(documentImageRepository.save(
+                            new DocumentImageEntity(document, pageNumber, imageIndex, imagePath.toString())
+                    ));
                     imageIndex++;
                 }
 
@@ -106,6 +114,21 @@ public class ImageExtractionService {
         List<BufferedImage> images = new ArrayList<>();
         collectImages(page.getResources(), images);
         return images;
+    }
+
+    private String imageHash(BufferedImage image) {
+        try {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            ImageIO.write(image, "PNG", baos);
+            byte[] bytes = baos.toByteArray();
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            byte[] hash = md.digest(bytes);
+            StringBuilder sb = new StringBuilder();
+            for (byte b : hash) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private void collectImages(PDResources resources, List<BufferedImage> images) throws IOException {

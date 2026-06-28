@@ -1,27 +1,115 @@
 package ru.max.raganalyzer.service;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import ru.max.raganalyzer.client.OllamaGenerateRequest;
 import ru.max.raganalyzer.client.OllamaGenerateResponse;
 import ru.max.raganalyzer.config.OllamaProperties;
-
 import ru.max.raganalyzer.dto.MessageDto;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 @Service
 public class LlmService {
 
     private final RestClient restClient;
     private final OllamaProperties ollamaProperties;
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     public LlmService(OllamaProperties ollamaProperties) {
         this.ollamaProperties = ollamaProperties;
         this.restClient = RestClient.builder()
                 .baseUrl(ollamaProperties.getBaseUrl())
                 .build();
+    }
+
+    // Стриминг — отдаёт токены по одному в onToken, в конце вызывает onDone
+    public void streamAnswer(String question, String context, List<MessageDto> history,
+                             Consumer<String> onToken, Runnable onDone) {
+        String prompt = buildPrompt(question, context, history);
+
+        OllamaGenerateRequest request = new OllamaGenerateRequest(
+                ollamaProperties.getChatModel(),
+                prompt,
+                true,   // stream = true
+                Map.of("temperature", 0)
+        );
+
+        restClient.post()
+                .uri("/api/generate")
+                .body(request)
+                .exchange((req, res) -> {
+                    try (BufferedReader reader = new BufferedReader(
+                            new InputStreamReader(res.getBody(), StandardCharsets.UTF_8))) {
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            if (line.isBlank()) continue;
+                            try {
+                                OllamaGenerateResponse chunk =
+                                        objectMapper.readValue(line, OllamaGenerateResponse.class);
+                                if (chunk.response() != null && !chunk.response().isEmpty()) {
+                                    onToken.accept(chunk.response());
+                                }
+                                if (chunk.done()) break;
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                    onDone.run();
+                    return null;
+                });
+    }
+
+    public String generateTitle(List<MessageDto> history) {
+        String dialog = history.stream()
+                .map(m -> ("user".equals(m.role()) ? "Пользователь: " : "Ассистент: ") + m.text())
+                .collect(java.util.stream.Collectors.joining("\n"));
+
+        String prompt = """
+                На основе диалога придумай очень короткое название чата (2-5 слов, без кавычек, без точки в конце).
+                Только само название, ничего больше.
+
+                Диалог:
+                %s
+
+                Название:
+                """.formatted(dialog);
+
+        OllamaGenerateRequest request = new OllamaGenerateRequest(
+                ollamaProperties.getChatModel(),
+                prompt,
+                false,
+                Map.of("temperature", 0)
+        );
+
+        OllamaGenerateResponse response = restClient.post()
+                .uri("/api/generate")
+                .body(request)
+                .retrieve()
+                .body(OllamaGenerateResponse.class);
+
+        if (response == null || response.response() == null || response.response().isBlank()) {
+            return "Диалог";
+        }
+
+        return cleanTitle(response.response());
+    }
+
+    private String cleanTitle(String raw) {
+        return raw
+                .replaceAll("(?s)<think>.*?</think>", "")
+                .replace("\"", "")
+                .replace("«", "").replace("»", "")
+                .replaceAll("^\\*+|\\*+$", "")
+                .replaceAll("\\s+", " ")
+                .trim();
     }
 
     public String generateAnswer(String question, String context, List<MessageDto> history) {
@@ -67,30 +155,29 @@ public class LlmService {
         }
 
         return """
-            Ты помощник, который отвечает на вопросы строго по загруженным документам.
+            You are a Russian-language assistant. Always respond in Russian only. Never use Chinese, English, or other languages.
+            Ты помощник, который отвечает на вопросы по загруженным документам.
+            Контекст содержит отрывки из одного или нескольких документов, каждый помечен заголовком "## Документ: название".
 
             Правила:
-            1. Отвечай только на основе предоставленного контекста из документов.
-            2. Учитывай историю переписки — пользователь может уточнять или продолжать предыдущий вопрос.
+            1. Внимательно прочитай все документы в контексте и найди ответ в любом из них.
+            2. Учитывай историю переписки — пользователь может уточнять предыдущий вопрос.
             3. Отвечай развёрнуто и подробно, если вопрос этого требует.
             4. Отвечай на русском языке.
             5. Используй markdown для форматирования:
-               - ## Заголовок — для названий разделов
                - **жирный** — для важных терминов
-               - - пункт — для перечислений и списков шагов
-               - `код` — для технических терминов, команд, значений
+               - - пункт — для перечислений
                - > цитата — для дословных фраз из документа
-            6. Не пиши "Ответ:" или любые другие метки в начале.
+            6. Не пиши "Ответ:" в начале.
             7. Не добавляй информацию, которой нет в контексте.
 
-            Если ответа нет в контексте документов, напиши строго:
+            Если ответа нет ни в одном из документов, напиши строго:
             В загруженных документах нет информации для ответа на этот вопрос.
 
-            Контекст из документов:
-            ---
+            Контекст:
             %s
-            ---%s
-            Вопрос пользователя: %s
+            %s
+            Вопрос: %s
 
             """.formatted(context, historyBlock, question);
     }

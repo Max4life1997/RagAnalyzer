@@ -57,6 +57,10 @@ public class DocumentEntity {
         this.createdAt = LocalDateTime.now();
     }
 
+    public void updateTextLength(int textLength) {
+        this.textLength = textLength;
+    }
+
     public void markIndexed(int chunksCount) {
         this.status = DocumentStatus.INDEXED;
         this.chunksCount = chunksCount;
