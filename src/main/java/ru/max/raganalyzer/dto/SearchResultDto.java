@@ -8,6 +8,7 @@ public record SearchResultDto(
         String fileName,
         int chunkIndex,
         String content,
-        double distance
+        double distance,
+        double similarity
 ) {
 }

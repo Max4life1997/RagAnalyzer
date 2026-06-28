@@ -6,6 +6,7 @@ public record SourceDto(
         UUID documentId,
         String fileName,
         int chunkIndex,
-        double distance
+        double distance,
+        double similarity
 ) {
 }

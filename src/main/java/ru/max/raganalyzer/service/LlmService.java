@@ -38,29 +38,69 @@ public class LlmService {
             throw new RuntimeException("Ollama не вернул ответ");
         }
 
-        return response.response().trim();
+        return cleanAnswer(response.response());
     }
 
     private String buildPrompt(String question, String context) {
         return """
-                Ты помощник, который отвечает на вопросы только на основе переданного контекста.
+            /no_think
 
-                Правила:
-                1. Используй только информацию из контекста.
-                2. Если в контексте нет ответа, скажи: "В загруженных документах нет информации для ответа на этот вопрос."
-                3. Не придумывай факты.
-                4. Отвечай кратко и понятно.
-                5. Отвечай на русском языке.
+            Ты RAG-ассистент. Отвечай только на основе контекста.
 
-                Контекст:
-                ---
-                %s
-                ---
+            ВАЖНО:
+            - Верни только финальный ответ.
+            - Не показывай рассуждения.
+            - Не пиши план анализа.
+            - Не используй markdown.
+            - Не используй английский язык.
+            - Не используй теги <think>.
+            - Не добавляй факты от себя.
 
-                Вопрос пользователя:
-                %s
+            Правила ответа:
+            1. Используй только информацию из контекста.
+            2. Если в контексте есть точная фраза, которая отвечает на вопрос, используй её максимально близко к оригиналу.
+            3. Не переформулируй без необходимости.
+            4. Если ответа нет в контексте, ответь строго:
+            В загруженных документах нет информации для ответа на этот вопрос.
+            5. Ответ должен быть коротким, 1-2 предложения.
 
-                Ответ:
-                """.formatted(context, question);
+            Контекст:
+            ---
+            %s
+            ---
+
+            Вопрос:
+            %s
+
+            Ответ только на русском языке:
+            """.formatted(context, question);
+    }
+
+    private String cleanAnswer(String answer) {
+        if (answer == null) {
+            return "";
+        }
+
+        String cleaned = answer;
+
+        cleaned = cleaned.replaceAll("(?s)<think>.*?</think>", "");
+
+        if (cleaned.contains("</think>")) {
+            cleaned = cleaned.substring(cleaned.lastIndexOf("</think>") + "</think>".length());
+        }
+
+        if (cleaned.contains("Answer:")) {
+            cleaned = cleaned.substring(cleaned.lastIndexOf("Answer:") + "Answer:".length());
+        }
+
+        if (cleaned.contains("Ответ:")) {
+            cleaned = cleaned.substring(cleaned.lastIndexOf("Ответ:") + "Ответ:".length());
+        }
+
+        return cleaned
+                .replace("```", "")
+                .replace("`", "")
+                .replaceAll("\\s+", " ")
+                .trim();
     }
 }

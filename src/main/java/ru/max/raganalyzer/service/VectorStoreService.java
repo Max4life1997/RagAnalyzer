@@ -46,21 +46,26 @@ public class VectorStoreService {
                     d.original_file_name AS file_name,
                     dc.chunk_index,
                     dc.content,
-                    dc.embedding <-> ?::vector AS distance
+                    dc.embedding <=> ?::vector AS distance
                 FROM document_chunks dc
                 JOIN documents d ON d.id = dc.document_id
                 WHERE dc.embedding IS NOT NULL
-                ORDER BY dc.embedding <-> ?::vector
+                ORDER BY dc.embedding <=> ?::vector
                 LIMIT ?
                 """,
-                (rs, rowNum) -> new SearchResultDto(
-                        rs.getObject("chunk_id", UUID.class),
-                        rs.getObject("document_id", UUID.class),
-                        rs.getString("file_name"),
-                        rs.getInt("chunk_index"),
-                        rs.getString("content"),
-                        rs.getDouble("distance")
-                ),
+                (rs, rowNum) -> {
+                    double distance = rs.getDouble("distance");
+
+                    return new SearchResultDto(
+                            rs.getObject("chunk_id", UUID.class),
+                            rs.getObject("document_id", UUID.class),
+                            rs.getString("file_name"),
+                            rs.getInt("chunk_index"),
+                            rs.getString("content"),
+                            distance,
+                            1.0 - distance
+                    );
+                },
                 vectorValue,
                 vectorValue,
                 limit

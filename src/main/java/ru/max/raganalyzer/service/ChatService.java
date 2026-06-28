@@ -13,6 +13,7 @@ import java.util.stream.Collectors;
 public class ChatService {
 
     private static final int CONTEXT_CHUNKS_LIMIT = 5;
+    private static final double MAX_DISTANCE = 0.55;
 
     private final EmbeddingService embeddingService;
     private final VectorStoreService vectorStoreService;
@@ -35,28 +36,33 @@ public class ChatService {
 
         List<Double> questionEmbedding = embeddingService.createEmbedding(request.question());
 
-        List<SearchResultDto> chunks = vectorStoreService.findSimilarChunks(
+        List<SearchResultDto> foundChunks = vectorStoreService.findSimilarChunks(
                 questionEmbedding,
                 CONTEXT_CHUNKS_LIMIT
         );
 
-        if (chunks.isEmpty()) {
+        List<SearchResultDto> relevantChunks = foundChunks.stream()
+                .filter(chunk -> chunk.distance() <= MAX_DISTANCE)
+                .toList();
+
+        if (relevantChunks.isEmpty()) {
             return new AskResponse(
-                    "В загруженных документах нет информации для ответа на этот вопрос.",
+                    "В загруженных документах нет достаточно релевантной информации для ответа на этот вопрос.",
                     List.of()
             );
         }
 
-        String context = buildContext(chunks);
+        String context = buildContext(relevantChunks);
 
         String answer = llmService.generateAnswer(request.question(), context);
 
-        List<SourceDto> sources = chunks.stream()
+        List<SourceDto> sources = relevantChunks.stream()
                 .map(chunk -> new SourceDto(
                         chunk.documentId(),
                         chunk.fileName(),
                         chunk.chunkIndex(),
-                        chunk.distance()
+                        chunk.distance(),
+                        chunk.similarity()
                 ))
                 .toList();
 
@@ -66,12 +72,17 @@ public class ChatService {
     private String buildContext(List<SearchResultDto> chunks) {
         return chunks.stream()
                 .map(chunk -> """
-                        Источник: %s, chunkIndex=%d
-                        Текст:
-                        %s
-                        """.formatted(
+                    [Источник]
+                    Файл: %s
+                    Номер чанка: %d
+                    Similarity: %.4f
+
+                    [Текст]
+                    %s
+                    """.formatted(
                         chunk.fileName(),
                         chunk.chunkIndex(),
+                        chunk.similarity(),
                         chunk.content()
                 ))
                 .collect(Collectors.joining("\n---\n"));
