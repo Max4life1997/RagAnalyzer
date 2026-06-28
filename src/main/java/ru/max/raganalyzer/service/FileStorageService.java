@@ -46,6 +46,14 @@ public class FileStorageService {
         return fileName.substring(fileName.lastIndexOf("."));
     }
 
+    public void deleteFile(String storedPath) {
+        try {
+            Files.deleteIfExists(Path.of(storedPath));
+        } catch (IOException e) {
+            throw new RuntimeException("Не удалось удалить файл: " + storedPath, e);
+        }
+    }
+
     private void createDocumentsDirectory() {
         try {
             Files.createDirectories(documentsDir);

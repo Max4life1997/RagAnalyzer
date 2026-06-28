@@ -4,6 +4,7 @@ import java.util.List;
 
 public record AskResponse(
         String answer,
-        List<SourceDto> sources
+        List<SourceDto> sources,
+        List<ImageDto> images
 ) {
 }

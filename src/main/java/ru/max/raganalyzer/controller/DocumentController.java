@@ -1,6 +1,7 @@
 package ru.max.raganalyzer.controller;
 
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import ru.max.raganalyzer.dto.ChunkDto;
@@ -37,5 +38,11 @@ public class DocumentController {
     @GetMapping("/{documentId}/chunks")
     public List<ChunkDto> getDocumentChunks(@PathVariable UUID documentId) {
         return documentService.getDocumentChunks(documentId);
+    }
+
+    @DeleteMapping("/{documentId}")
+    public ResponseEntity<Void> deleteDocument(@PathVariable UUID documentId) {
+        documentService.deleteDocument(documentId);
+        return ResponseEntity.noContent().build();
     }
 }

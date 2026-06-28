@@ -26,6 +26,7 @@ public class DocumentService {
     private final DocumentChunkRepository documentChunkRepository;
     private final EmbeddingService embeddingService;
     private final VectorStoreService vectorStoreService;
+    private final ImageExtractionService imageExtractionService;
 
     public DocumentService(
             FileStorageService fileStorageService,
@@ -34,7 +35,8 @@ public class DocumentService {
             DocumentRepository documentRepository,
             DocumentChunkRepository documentChunkRepository,
             EmbeddingService embeddingService,
-            VectorStoreService vectorStoreService
+            VectorStoreService vectorStoreService,
+            ImageExtractionService imageExtractionService
     ) {
         this.fileStorageService = fileStorageService;
         this.textExtractionService = textExtractionService;
@@ -43,6 +45,7 @@ public class DocumentService {
         this.documentChunkRepository = documentChunkRepository;
         this.embeddingService = embeddingService;
         this.vectorStoreService = vectorStoreService;
+        this.imageExtractionService = imageExtractionService;
     }
 
     @Transactional
@@ -70,7 +73,8 @@ public class DocumentService {
                             savedDocument,
                             chunk.index(),
                             chunk.content(),
-                            chunk.length()
+                            chunk.length(),
+                            chunk.pageNumber()
                     ))
                     .toList();
 
@@ -92,8 +96,20 @@ public class DocumentService {
             }
 
             savedDocument.markIndexed(chunks.size());
+
         } catch (Exception e) {
             savedDocument.markFailed(e.getMessage());
+        }
+
+        // Извлечение изображений — отдельный шаг, не влияет на статус индексации
+        if (savedDocument.getStatus() == ru.max.raganalyzer.entity.DocumentStatus.INDEXED) {
+            try {
+                imageExtractionService.extractAndSave(storedPath.toAbsolutePath(), savedDocument);
+            } catch (Exception e) {
+                // Логируем но не падаем — документ уже проиндексирован
+                System.err.println("Предупреждение: не удалось извлечь изображения из " +
+                        savedDocument.getOriginalFileName() + ": " + e.getMessage());
+            }
         }
 
         return new DocumentUploadResponse(
@@ -129,9 +145,21 @@ public class DocumentService {
                 .map(chunk -> new ChunkDto(
                         chunk.getChunkIndex(),
                         chunk.getContent(),
-                        chunk.getLength()
+                        chunk.getLength(),
+                        chunk.getPageNumber()
                 ))
                 .toList();
+    }
+
+    @Transactional
+    public void deleteDocument(UUID documentId) {
+        DocumentEntity document = documentRepository.findById(documentId)
+                .orElseThrow(() -> new IllegalArgumentException("Документ не найден: " + documentId));
+
+        documentChunkRepository.deleteByDocumentId(documentId);
+        imageExtractionService.deleteImages(documentId);
+        documentRepository.deleteById(documentId);
+        fileStorageService.deleteFile(document.getStoredPath());
     }
 
     private DocumentDto toDocumentDto(DocumentEntity document) {

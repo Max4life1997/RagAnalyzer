@@ -6,6 +6,9 @@ import ru.max.raganalyzer.client.OllamaGenerateRequest;
 import ru.max.raganalyzer.client.OllamaGenerateResponse;
 import ru.max.raganalyzer.config.OllamaProperties;
 
+import ru.max.raganalyzer.dto.MessageDto;
+
+import java.util.List;
 import java.util.Map;
 
 @Service
@@ -21,8 +24,8 @@ public class LlmService {
                 .build();
     }
 
-    public String generateAnswer(String question, String context) {
-        String prompt = buildPrompt(question, context);
+    public String generateAnswer(String question, String context, List<MessageDto> history) {
+        String prompt = buildPrompt(question, context, history);
 
         OllamaGenerateRequest request = new OllamaGenerateRequest(
                 ollamaProperties.getChatModel(),
@@ -47,35 +50,49 @@ public class LlmService {
         return cleanAnswer(response.response());
     }
 
-    private String buildPrompt(String question, String context) {
+    private String buildPrompt(String question, String context, List<MessageDto> history) {
+        String historyBlock = "";
+        if (!history.isEmpty()) {
+            StringBuilder sb = new StringBuilder();
+            for (MessageDto msg : history) {
+                String role = "user".equals(msg.role()) ? "Пользователь" : "Ассистент";
+                sb.append(role).append(": ").append(msg.text()).append("\n");
+            }
+            historyBlock = """
+
+            История переписки (для понимания контекста диалога):
+            ---
+            %s---
+            """.formatted(sb);
+        }
+
         return """
-            Ты RAG-ассистент.
-            Ответь на вопрос пользователя только на основе контекста.
+            Ты помощник, который отвечает на вопросы строго по загруженным документам.
 
             Правила:
-            1. Верни только текст ответа.
-            2. Не возвращай JSON.
-            3. Не используй фигурные скобки.
-            4. Не пиши "Ответ:".
-            5. Не пиши рассуждения.
-            6. Не используй markdown.
-            7. Не добавляй информацию не из контекста.
-            8. Ответ должен быть на русском языке.
-            9. Ответ должен быть коротким, 1 предложение.
+            1. Отвечай только на основе предоставленного контекста из документов.
+            2. Учитывай историю переписки — пользователь может уточнять или продолжать предыдущий вопрос.
+            3. Отвечай развёрнуто и подробно, если вопрос этого требует.
+            4. Отвечай на русском языке.
+            5. Используй markdown для форматирования:
+               - ## Заголовок — для названий разделов
+               - **жирный** — для важных терминов
+               - - пункт — для перечислений и списков шагов
+               - `код` — для технических терминов, команд, значений
+               - > цитата — для дословных фраз из документа
+            6. Не пиши "Ответ:" или любые другие метки в начале.
+            7. Не добавляй информацию, которой нет в контексте.
 
-            Если ответа нет в контексте, верни строго:
+            Если ответа нет в контексте документов, напиши строго:
             В загруженных документах нет информации для ответа на этот вопрос.
 
-            Контекст:
+            Контекст из документов:
             ---
             %s
-            ---
+            ---%s
+            Вопрос пользователя: %s
 
-            Вопрос:
-            %s
-
-            Короткий ответ без JSON, без кавычек и без слова "Ответ:":
-            """.formatted(context, question);
+            """.formatted(context, historyBlock, question);
     }
 
     private String cleanAnswer(String answer) {
@@ -92,13 +109,10 @@ public class LlmService {
             cleaned = cleaned.substring(cleaned.lastIndexOf("</think>") + "</think>".length());
         }
 
-        // Убираем markdown
+        // Убираем только JSON-блоки кода, остальной markdown оставляем
         cleaned = cleaned
                 .replace("```json", "")
                 .replace("```", "")
-                .replace("`", "")
-                .replace("**", "")
-                .replace("*", "")
                 .trim();
 
         // Убираем фигурные скобки, если модель вернула что-то типа {Ответ: ...}
@@ -122,15 +136,27 @@ public class LlmService {
                 .replaceAll("\"+$", "")
                 .trim();
 
-        // Нормализуем пробелы
+        // Нормализуем пробелы внутри строк, но сохраняем переносы
         cleaned = cleaned
-                .replaceAll("\\s+", " ")
+                .replaceAll("[ \\t]+", " ")
                 .trim();
 
-        // Если модель вернула несколько предложений с мусором, берём первое нормальное русское
-        cleaned = takeFirstUsefulRussianSentence(cleaned);
+        // Если модель написала список в одну строку через "* пункт * пункт",
+        // разбиваем на отдельные строки чтобы marked распознал это как список
+        cleaned = normalizeInlineLists(cleaned);
 
         return cleaned;
+    }
+
+    // Если модель пишет "* пункт 1. * пункт 2." в одну строку — разбиваем на строки
+    private String normalizeInlineLists(String text) {
+        // Ищем паттерн: пробел + "* " посреди строки и ставим перенос перед *
+        String result = text.replaceAll("(?<=\\S)\\s+\\*\\s+", "\n* ");
+
+        // То же для нумерованных списков: "1. текст 2. текст" → перенос перед цифрой
+        result = result.replaceAll("(?<=\\.)\\s+(\\d+\\.\\s)", "\n$1");
+
+        return result;
     }
 
     private String removeAnswerPrefix(String text) {

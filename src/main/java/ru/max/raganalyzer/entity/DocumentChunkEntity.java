@@ -26,6 +26,9 @@ public class DocumentChunkEntity {
     @Column(name = "length", nullable = false)
     private int length;
 
+    @Column(name = "page_number", nullable = false)
+    private int pageNumber;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -36,12 +39,14 @@ public class DocumentChunkEntity {
             DocumentEntity document,
             int chunkIndex,
             String content,
-            int length
+            int length,
+            int pageNumber
     ) {
         this.document = document;
         this.chunkIndex = chunkIndex;
         this.content = content;
         this.length = length;
+        this.pageNumber = pageNumber;
         this.createdAt = LocalDateTime.now();
     }
 
@@ -63,6 +68,10 @@ public class DocumentChunkEntity {
 
     public int getLength() {
         return length;
+    }
+
+    public int getPageNumber() {
+        return pageNumber;
     }
 
     public LocalDateTime getCreatedAt() {

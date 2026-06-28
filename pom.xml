@@ -20,6 +20,7 @@
 
   <properties>
     <java.version>21</java.version>
+    <tika.version>3.3.1</tika.version>
   </properties>
 
   <dependencies>
@@ -49,17 +50,29 @@
       <scope>runtime</scope>
     </dependency>
 
+    <!-- Flyway — управление миграциями БД -->
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-core</artifactId>
+    </dependency>
+
+    <!-- Поддержка PostgreSQL 10+ в Flyway (начиная с Flyway 10 вынесена отдельно) -->
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
+
     <!-- Apache Tika: извлечение текста из PDF, DOCX, TXT и других документов -->
     <dependency>
       <groupId>org.apache.tika</groupId>
       <artifactId>tika-core</artifactId>
-      <version>3.2.3</version>
+      <version>${tika.version}</version>
     </dependency>
 
     <dependency>
       <groupId>org.apache.tika</groupId>
       <artifactId>tika-parsers-standard-package</artifactId>
-      <version>3.2.3</version>
+      <version>${tika.version}</version>
     </dependency>
   </dependencies>
 

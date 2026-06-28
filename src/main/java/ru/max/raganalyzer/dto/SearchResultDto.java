@@ -7,6 +7,7 @@ public record SearchResultDto(
         UUID documentId,
         String fileName,
         int chunkIndex,
+        int pageNumber,
         String content,
         double distance,
         double similarity
