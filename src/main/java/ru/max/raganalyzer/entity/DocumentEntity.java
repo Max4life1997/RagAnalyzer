@@ -25,8 +25,15 @@ public class DocumentEntity {
     @Column(name = "text_length", nullable = false)
     private int textLength;
 
+    @Column(name = "chunks_count", nullable = false)
+    private int chunksCount;
+
+    @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
-    private String status;
+    private DocumentStatus status;
+
+    @Column(name = "error_message", columnDefinition = "TEXT")
+    private String errorMessage;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
@@ -38,15 +45,27 @@ public class DocumentEntity {
             String originalFileName,
             String storedPath,
             long sizeBytes,
-            int textLength,
-            String status
+            int textLength
     ) {
         this.originalFileName = originalFileName;
         this.storedPath = storedPath;
         this.sizeBytes = sizeBytes;
         this.textLength = textLength;
-        this.status = status;
+        this.chunksCount = 0;
+        this.status = DocumentStatus.PROCESSING;
+        this.errorMessage = null;
         this.createdAt = LocalDateTime.now();
+    }
+
+    public void markIndexed(int chunksCount) {
+        this.status = DocumentStatus.INDEXED;
+        this.chunksCount = chunksCount;
+        this.errorMessage = null;
+    }
+
+    public void markFailed(String errorMessage) {
+        this.status = DocumentStatus.FAILED;
+        this.errorMessage = errorMessage;
     }
 
     public UUID getId() {
@@ -69,8 +88,16 @@ public class DocumentEntity {
         return textLength;
     }
 
-    public String getStatus() {
+    public int getChunksCount() {
+        return chunksCount;
+    }
+
+    public DocumentStatus getStatus() {
         return status;
+    }
+
+    public String getErrorMessage() {
+        return errorMessage;
     }
 
     public LocalDateTime getCreatedAt() {

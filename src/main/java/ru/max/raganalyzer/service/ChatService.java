@@ -1,6 +1,7 @@
 package ru.max.raganalyzer.service;
 
 import org.springframework.stereotype.Service;
+import ru.max.raganalyzer.config.RagSearchProperties;
 import ru.max.raganalyzer.dto.AskRequest;
 import ru.max.raganalyzer.dto.AskResponse;
 import ru.max.raganalyzer.dto.SearchResultDto;
@@ -12,8 +13,7 @@ import java.util.stream.Collectors;
 @Service
 public class ChatService {
 
-    private static final int CONTEXT_CHUNKS_LIMIT = 5;
-    private static final double MAX_DISTANCE = 0.55;
+    private final RagSearchProperties ragSearchProperties;
 
     private final EmbeddingService embeddingService;
     private final VectorStoreService vectorStoreService;
@@ -22,11 +22,13 @@ public class ChatService {
     public ChatService(
             EmbeddingService embeddingService,
             VectorStoreService vectorStoreService,
-            LlmService llmService
+            LlmService llmService,
+            RagSearchProperties ragSearchProperties
     ) {
         this.embeddingService = embeddingService;
         this.vectorStoreService = vectorStoreService;
         this.llmService = llmService;
+        this.ragSearchProperties = ragSearchProperties;
     }
 
     public AskResponse ask(AskRequest request) {
@@ -38,11 +40,11 @@ public class ChatService {
 
         List<SearchResultDto> foundChunks = vectorStoreService.findSimilarChunks(
                 questionEmbedding,
-                CONTEXT_CHUNKS_LIMIT
+                ragSearchProperties.getTopK()
         );
 
         List<SearchResultDto> relevantChunks = foundChunks.stream()
-                .filter(chunk -> chunk.distance() <= MAX_DISTANCE)
+                .filter(chunk -> chunk.distance() <= ragSearchProperties.getMaxDistance())
                 .toList();
 
         if (relevantChunks.isEmpty()) {

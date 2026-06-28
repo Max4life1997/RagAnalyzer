@@ -1,6 +1,7 @@
 package ru.max.raganalyzer.service;
 
 import org.springframework.stereotype.Service;
+import ru.max.raganalyzer.config.RagSearchProperties;
 import ru.max.raganalyzer.dto.SearchRequest;
 import ru.max.raganalyzer.dto.SearchResultDto;
 
@@ -9,17 +10,19 @@ import java.util.List;
 @Service
 public class SearchService {
 
-    private static final int DEFAULT_LIMIT = 5;
+    private final RagSearchProperties ragSearchProperties;
 
     private final EmbeddingService embeddingService;
     private final VectorStoreService vectorStoreService;
 
     public SearchService(
             EmbeddingService embeddingService,
-            VectorStoreService vectorStoreService
+            VectorStoreService vectorStoreService,
+            RagSearchProperties ragSearchProperties
     ) {
         this.embeddingService = embeddingService;
         this.vectorStoreService = vectorStoreService;
+        this.ragSearchProperties = ragSearchProperties;
     }
 
     public List<SearchResultDto> search(SearchRequest request) {
@@ -29,6 +32,6 @@ public class SearchService {
 
         List<Double> questionEmbedding = embeddingService.createEmbedding(request.question());
 
-        return vectorStoreService.findSimilarChunks(questionEmbedding, DEFAULT_LIMIT);
+        return vectorStoreService.findSimilarChunks(questionEmbedding, ragSearchProperties.getTopK());
     }
 }

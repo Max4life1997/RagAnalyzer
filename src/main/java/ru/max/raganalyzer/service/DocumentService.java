@@ -59,28 +59,41 @@ public class DocumentService {
                 file.getOriginalFilename(),
                 storedPath.toString(),
                 file.getSize(),
-                extractionResult.length(),
-                "CHUNKED"
+                extractionResult.length()
         );
 
         DocumentEntity savedDocument = documentRepository.save(document);
 
-        List<DocumentChunkEntity> chunkEntities = chunks.stream()
-                .map(chunk -> new DocumentChunkEntity(
-                        savedDocument,
-                        chunk.index(),
-                        chunk.content(),
-                        chunk.length()
-                ))
-                .toList();
+        try {
+            List<DocumentChunkEntity> chunkEntities = chunks.stream()
+                    .map(chunk -> new DocumentChunkEntity(
+                            savedDocument,
+                            chunk.index(),
+                            chunk.content(),
+                            chunk.length()
+                    ))
+                    .toList();
 
-        List<DocumentChunkEntity> savedChunks = documentChunkRepository.saveAll(chunkEntities);
+            List<DocumentChunkEntity> savedChunks = documentChunkRepository.saveAll(chunkEntities);
 
-        documentChunkRepository.flush();
+            documentChunkRepository.flush();
 
-        for (DocumentChunkEntity savedChunk : savedChunks) {
-            List<Double> embedding = embeddingService.createEmbedding(savedChunk.getContent());
-            vectorStoreService.updateChunkEmbedding(savedChunk.getId(), embedding);
+            List<String> chunkTexts = savedChunks.stream()
+                    .map(DocumentChunkEntity::getContent)
+                    .toList();
+
+            List<List<Double>> embeddings = embeddingService.createEmbeddings(chunkTexts);
+
+            for (int i = 0; i < savedChunks.size(); i++) {
+                DocumentChunkEntity savedChunk = savedChunks.get(i);
+                List<Double> embedding = embeddings.get(i);
+
+                vectorStoreService.updateChunkEmbedding(savedChunk.getId(), embedding);
+            }
+
+            savedDocument.markIndexed(chunks.size());
+        } catch (Exception e) {
+            savedDocument.markFailed(e.getMessage());
         }
 
         return new DocumentUploadResponse(
@@ -92,7 +105,8 @@ public class DocumentService {
                 extractionResult.preview(),
                 chunks.size(),
                 chunks,
-                savedDocument.getStatus()
+                savedDocument.getStatus().name(),
+                savedDocument.getErrorMessage()
         );
     }
 
@@ -127,7 +141,9 @@ public class DocumentService {
                 document.getStoredPath(),
                 document.getSizeBytes(),
                 document.getTextLength(),
-                document.getStatus(),
+                document.getChunksCount(),
+                document.getStatus().name(),
+                document.getErrorMessage(),
                 document.getCreatedAt()
         );
     }

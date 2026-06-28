@@ -50,6 +50,7 @@ public class VectorStoreService {
                 FROM document_chunks dc
                 JOIN documents d ON d.id = dc.document_id
                 WHERE dc.embedding IS NOT NULL
+                  AND d.status = 'INDEXED'
                 ORDER BY dc.embedding <=> ?::vector
                 LIMIT ?
                 """,
@@ -71,7 +72,6 @@ public class VectorStoreService {
                 limit
         );
     }
-
     private String toPgVector(List<Double> embedding) {
         return embedding.stream()
                 .map(String::valueOf)

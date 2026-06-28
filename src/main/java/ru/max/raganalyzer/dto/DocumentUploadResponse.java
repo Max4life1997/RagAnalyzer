@@ -12,6 +12,7 @@ public record DocumentUploadResponse(
         String textPreview,
         int chunksCount,
         List<ChunkDto> chunks,
-        String status
+        String status,
+        String errorMessage
 ) {
 }

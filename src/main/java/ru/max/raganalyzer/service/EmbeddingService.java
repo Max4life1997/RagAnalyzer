@@ -26,9 +26,25 @@ public class EmbeddingService {
             throw new IllegalArgumentException("Текст для embedding пустой");
         }
 
+        return createEmbeddings(List.of(text)).get(0);
+    }
+
+    public List<List<Double>> createEmbeddings(List<String> texts) {
+        if (texts == null || texts.isEmpty()) {
+            throw new IllegalArgumentException("Список текстов для embedding пустой");
+        }
+
+        List<String> notBlankTexts = texts.stream()
+                .filter(text -> text != null && !text.isBlank())
+                .toList();
+
+        if (notBlankTexts.isEmpty()) {
+            throw new IllegalArgumentException("Все тексты для embedding пустые");
+        }
+
         OllamaEmbedRequest request = new OllamaEmbedRequest(
                 ollamaProperties.getEmbeddingModel(),
-                text
+                notBlankTexts
         );
 
         OllamaEmbedResponse response = restClient.post()
@@ -38,9 +54,18 @@ public class EmbeddingService {
                 .body(OllamaEmbedResponse.class);
 
         if (response == null || response.embeddings() == null || response.embeddings().isEmpty()) {
-            throw new RuntimeException("Ollama не вернул embedding");
+            throw new RuntimeException("Ollama не вернул embeddings");
         }
 
-        return response.embeddings().get(0);
+        if (response.embeddings().size() != notBlankTexts.size()) {
+            throw new RuntimeException(
+                    "Количество embeddings не совпадает с количеством текстов. texts="
+                            + notBlankTexts.size()
+                            + ", embeddings="
+                            + response.embeddings().size()
+            );
+        }
+
+        return response.embeddings();
     }
 }

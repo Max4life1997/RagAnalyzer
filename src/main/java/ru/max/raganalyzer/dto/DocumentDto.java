@@ -9,7 +9,9 @@ public record DocumentDto(
         String storedPath,
         long sizeBytes,
         int textLength,
+        int chunksCount,
         String status,
+        String errorMessage,
         LocalDateTime createdAt
 ) {
 }
