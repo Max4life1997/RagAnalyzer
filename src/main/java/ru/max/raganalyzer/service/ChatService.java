@@ -90,7 +90,7 @@ public class ChatService {
 
         List<MessageDto> history = request.history() != null ? request.history() : List.of();
 
-        String answer = llmService.generateAnswer(request.question(), context, history);
+        String answer = llmService.generateAnswer(request.question(), context, history, isAdviceEnabled(request));
 
         List<SourceDto> sources = relevantChunks.stream()
                 .map(chunk -> new SourceDto(
@@ -103,7 +103,9 @@ public class ChatService {
                 ))
                 .toList();
 
-        List<ImageDto> images = fetchImagesForSources(relevantChunks);
+        List<ImageDto> images = shouldAttachImages(request.question())
+                ? fetchImagesForSources(relevantChunks)
+                : List.of();
 
         return new AskResponse(answer, sources, images);
     }
@@ -153,7 +155,9 @@ public class ChatService {
                                 c.pageNumber(), c.distance(), c.similarity()))
                         .toList();
 
-                List<ImageDto> images = fetchImagesForSources(relevantChunks);
+                List<ImageDto> images = shouldAttachImages(request.question())
+                        ? fetchImagesForSources(relevantChunks)
+                        : List.of();
 
                 // Сначала отправляем метаданные (источники и изображения)
                 emitter.send(SseEmitter.event().data(
@@ -163,7 +167,7 @@ public class ChatService {
                 List<MessageDto> history = request.history() != null ? request.history() : List.of();
 
                 // Стримим токены — сериализуем вручную для гарантии формата
-                llmService.streamAnswer(request.question(), context, history,
+                llmService.streamAnswer(request.question(), context, history, isAdviceEnabled(request),
                         token -> {
                             try {
                                 emitter.send(SseEmitter.event().data(
@@ -197,6 +201,49 @@ public class ChatService {
     }
 
     // Собираем изображения со страниц, которые стали источниками ответа
+    private boolean isAdviceEnabled(AskRequest request) {
+        return Boolean.TRUE.equals(request.adviceEnabled());
+    }
+
+    private boolean shouldAttachImages(String question) {
+        if (question == null || question.isBlank()) {
+            return false;
+        }
+
+        String normalized = question.toLowerCase(java.util.Locale.ROOT).trim();
+
+        if (isGreetingOnly(normalized)) {
+            return false;
+        }
+
+        return containsAny(normalized,
+                "\u0444\u043e\u0442\u043e", "\u0444\u043e\u0442\u043e\u0433\u0440\u0430\u0444", "\u043a\u0430\u0440\u0442\u0438\u043d", "\u0438\u0437\u043e\u0431\u0440\u0430\u0436", "\u0440\u0438\u0441\u0443\u043d\u043e\u043a", "\u0441\u043a\u0440\u0438\u043d",
+                "\u0432\u0438\u0437\u0443\u0430\u043b", "\u043f\u043e\u043a\u0430\u0436\u0438", "\u043f\u043e\u043a\u0430\u0437\u0430\u0442\u044c", "\u043f\u043e\u0441\u043c\u043e\u0442\u0440\u0438", "\u0441\u043c\u043e\u0442\u0440\u0435\u0442\u044c",
+                "\u0441\u0442\u0440\u0430\u043d\u0438\u0446", "\u0432\u043d\u0435\u0448\u043d", "\u043f\u043e\u0440\u0442\u0440\u0435\u0442", "\u043b\u0438\u0446\u043e", "\u0430\u0432\u0430\u0442\u0430\u0440", "\u0441\u0445\u0435\u043c", "\u0433\u0440\u0430\u0444\u0438\u043a",
+                "\u0442\u0430\u0431\u043b\u0438\u0446", "\u0434\u0438\u0430\u0433\u0440\u0430\u043c", "\u0438\u043b\u043b\u044e\u0441\u0442\u0440\u0430\u0446", "jpeg", "jpg", "png"
+        );
+    }
+
+    private boolean isGreetingOnly(String normalizedQuestion) {
+        String compact = normalizedQuestion
+                .replaceAll("[\\s!,.?;:]+", " ")
+                .trim();
+
+        return containsAny(compact,
+                "\u043f\u0440\u0438\u0432\u0435\u0442", "\u0437\u0434\u0440\u0430\u0432\u0441\u0442\u0432\u0443\u0439", "\u0437\u0434\u0440\u0430\u0432\u0441\u0442\u0432\u0443\u0439\u0442\u0435", "\u0434\u043e\u0431\u0440\u044b\u0439 \u0434\u0435\u043d\u044c",
+                "\u0434\u043e\u0431\u0440\u043e\u0435 \u0443\u0442\u0440\u043e", "\u0434\u043e\u0431\u0440\u044b\u0439 \u0432\u0435\u0447\u0435\u0440", "hello", "hi"
+        ) && compact.length() <= 30;
+    }
+
+    private boolean containsAny(String text, String... markers) {
+        for (String marker : markers) {
+            if (text.contains(marker)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private List<ImageDto> fetchImagesForSources(List<SearchResultDto> chunks) {
         // Группируем страницы по документу
         var pagesByDocument = chunks.stream()

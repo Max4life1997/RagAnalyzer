@@ -5,11 +5,11 @@ export const api = {
         return res.json();
     },
 
-    async ask(question, documentIds, history) {
+    async ask(question, documentIds, history, adviceEnabled = false) {
         const res = await fetch("/api/chat/ask", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ question, documentIds, history })
+            body: JSON.stringify({ question, documentIds, history, adviceEnabled })
         });
         if (!res.ok) throw new Error(`Ошибка запроса: ${res.status}`);
         return res.json();
@@ -56,11 +56,11 @@ export const api = {
     },
 
     // Возвращает ReadableStream — вызывающий читает SSE события самостоятельно
-    askStream(question, documentIds, history) {
+    askStream(question, documentIds, history, adviceEnabled = false) {
         return fetch("/api/chat/ask/stream", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ question, documentIds, history })
+            body: JSON.stringify({ question, documentIds, history, adviceEnabled })
         });
     }
 };

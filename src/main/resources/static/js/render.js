@@ -48,6 +48,29 @@ export function escapeHtml(text) {
         .replaceAll("'", "&#39;");
 }
 
+function normalizeAnswerText(text) {
+    if (text == null) return "";
+    return String(text)
+        .replace(/^\s*\[\s*$/gm, "")
+        .replace(/^\s*\]\s*$/gm, "")
+        .replace(/\\\[/g, "")
+        .replace(/\\\]/g, "")
+        .replace(/\\\(/g, "")
+        .replace(/\\\)/g, "")
+        .replace(/\\text\{([^}]*)\}/g, "$1")
+        .replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, "($1) / ($2)")
+        .replace(/\\cdot/g, "*")
+        .replace(/\\times/g, "*")
+        .replace(/\\approx/g, "~")
+        .replace(/\\leq/g, "<=")
+        .replace(/\\geq/g, ">=")
+        .replace(/\\%/g, "%")
+        .replace(/\\[a-zA-Z]+/g, "")
+        .replace(/\{([^{}]*)\}/g, "$1")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+}
+
 function isNearBottom(container, threshold = 80) {
     return container.scrollHeight - container.scrollTop - container.clientHeight <= threshold;
 }
@@ -245,11 +268,12 @@ export function createStreamingMessage(els) {
 
     return {
         getRawText() { return rawText; },
+        isConnected() { return el.isConnected; },
 
         appendToken(token) {
             const shouldFollowStream = isNearBottom(els.chatMessages);
             rawText += token;
-            textEl.innerHTML = marked.parse(rawText);
+            textEl.innerHTML = marked.parse(normalizeAnswerText(rawText));
             Prism.highlightAllUnder(textEl);
             scrollToBottomIfNear(els.chatMessages, shouldFollowStream);
         },
@@ -259,7 +283,7 @@ export function createStreamingMessage(els) {
             // Убираем thinking-блоки из накопленного текста
             rawText = rawText.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
             if (rawText) {
-                textEl.innerHTML = marked.parse(rawText);
+                textEl.innerHTML = marked.parse(normalizeAnswerText(rawText));
                 Prism.highlightAllUnder(textEl);
             }
             textEl.classList.add("streaming-done");
@@ -291,7 +315,7 @@ export function createStreamingMessage(els) {
     };
 }
 
-export function addMessageElement(els, { role, text, sources = [], images = [] }) {
+export function addMessageElement(els, { role, text, sources = [], images = [], streaming = false }) {
     const isUser = role === "user";
 
     let sourcesHtml = "";
@@ -317,7 +341,10 @@ export function addMessageElement(els, { role, text, sources = [], images = [] }
 
     const textHtml = isUser
         ? `<div class="message__text">${escapeHtml(text)}</div>`
-        : `<div class="message__text message__text--markdown">${marked.parse(text)}</div>`;
+        : `<div class="message__text message__text--markdown">${text ? marked.parse(normalizeAnswerText(text)) : ""}</div>`;
+    const typingHtml = !isUser && streaming
+        ? `<div class="message__typing"><span></span><span></span><span></span></div>`
+        : "";
 
     const el = document.createElement("div");
     el.className = `message message--${role}`;
@@ -325,7 +352,7 @@ export function addMessageElement(els, { role, text, sources = [], images = [] }
         <div class="message__avatar">${isUser ? "Вы" : "R"}</div>
         <div class="message__body">
             <div class="message__role">${isUser ? "Вы" : "RagAnalyzer"}</div>
-            ${textHtml}${imagesHtml}${sourcesHtml}
+            ${textHtml}${typingHtml}${imagesHtml}${sourcesHtml}
         </div>`;
 
     if (!isUser) Prism.highlightAllUnder(el);

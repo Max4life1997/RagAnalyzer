@@ -6,6 +6,8 @@ export const STATUS = {
     FAILED: "FAILED"
 };
 
+const DEFAULT_CHAT_NAME = "\u0414\u0438\u0430\u043b\u043e\u0433";
+
 export const state = {
     documents: [],
     selectedDocumentIds: [],
@@ -26,14 +28,35 @@ export function loadChats() {
     }
 }
 
+function createId() {
+    if (globalThis.crypto?.randomUUID) {
+        return crypto.randomUUID();
+    }
+    return `chat-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function createChatName() {
+    const baseName = DEFAULT_CHAT_NAME;
+    const usedNames = new Set(state.chats.map(chat => chat.name));
+    if (!usedNames.has(baseName)) {
+        return baseName;
+    }
+
+    let index = 2;
+    while (usedNames.has(`${baseName} ${index}`)) {
+        index++;
+    }
+    return `${baseName} ${index}`;
+}
+
 export function getActiveChat() {
     return state.chats.find(c => c.id === state.activeChatId) || null;
 }
 
 export function createChat(documentIds) {
     const chat = {
-        id: crypto.randomUUID(),
-        name: "Диалог",
+        id: createId(),
+        name: createChatName(),
         documentIds: [...documentIds],
         messages: []
     };

@@ -1187,3 +1187,38 @@ textarea {
     .sidebar { width: 52px; }
     .sidebar__label { display: none; }
 }
+
+
+.chat-header__actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.advice-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 34px;
+    padding: 7px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(255,255,255,0.04);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.advice-toggle:hover {
+    background: rgba(255,255,255,0.07);
+}
+
+.advice-toggle input {
+    width: 15px;
+    height: 15px;
+    accent-color: var(--primary);
+    cursor: pointer;
+}

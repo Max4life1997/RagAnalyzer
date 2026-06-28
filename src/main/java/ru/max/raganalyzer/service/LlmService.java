@@ -32,9 +32,9 @@ public class LlmService {
     }
 
     // Стриминг — отдаёт токены по одному в onToken, в конце вызывает onDone
-    public void streamAnswer(String question, String context, List<MessageDto> history,
+    public void streamAnswer(String question, String context, List<MessageDto> history, boolean adviceEnabled,
                              Consumer<String> onToken, Runnable onDone) {
-        String prompt = buildPrompt(question, context, history);
+        String prompt = buildPrompt(question, context, history, adviceEnabled);
 
         OllamaGenerateRequest request = new OllamaGenerateRequest(
                 ollamaProperties.getChatModel(),
@@ -112,8 +112,8 @@ public class LlmService {
                 .trim();
     }
 
-    public String generateAnswer(String question, String context, List<MessageDto> history) {
-        String prompt = buildPrompt(question, context, history);
+    public String generateAnswer(String question, String context, List<MessageDto> history, boolean adviceEnabled) {
+        String prompt = buildPrompt(question, context, history, adviceEnabled);
 
         OllamaGenerateRequest request = new OllamaGenerateRequest(
                 ollamaProperties.getChatModel(),
@@ -138,7 +138,17 @@ public class LlmService {
         return cleanAnswer(response.response());
     }
 
-    private String buildPrompt(String question, String context, List<MessageDto> history) {
+    private String buildPrompt(String question, String context, List<MessageDto> history, boolean adviceEnabled) {
+        String adviceBlock = adviceEnabled
+                ? """
+
+            Advice mode is enabled.
+            After the document-grounded answer, add a separate section named "\u041c\u043e\u0439 \u0432\u0437\u0433\u043b\u044f\u0434".
+            In that section, give your cautious practical view, recommendation, or risk note.
+            Clearly separate it from facts from the documents. Do not invent document facts.
+            """
+                : "";
+
         String historyBlock = "";
         if (!history.isEmpty()) {
             StringBuilder sb = new StringBuilder();
@@ -156,6 +166,7 @@ public class LlmService {
 
         return """
             You are a Russian-language assistant. Always respond in Russian only. Never use Chinese, English, or other languages.
+            For calculations, do not use LaTeX, display-math brackets, or commands named frac, cdot, text. Write formulas as plain readable text, for example: E = P * i * (1 + i)^n / ((1 + i)^n - 1).
             Ты помощник, который отвечает на вопросы по загруженным документам.
             Контекст содержит отрывки из одного или нескольких документов, каждый помечен заголовком "## Документ: название".
 
@@ -177,9 +188,10 @@ public class LlmService {
             Контекст:
             %s
             %s
+            %s
             Вопрос: %s
 
-            """.formatted(context, historyBlock, question);
+            """.formatted(context, historyBlock, adviceBlock, question);
     }
 
     private String cleanAnswer(String answer) {

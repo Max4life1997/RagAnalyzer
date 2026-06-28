@@ -28,6 +28,7 @@ const els = {
     dropzone:           document.getElementById("dropzone"),
     fileInput:          document.getElementById("fileInput"),
     uploadStatus:       document.getElementById("uploadStatus"),
+    adviceToggle:       document.getElementById("adviceToggle"),
 };
 
 // ─── Хелперы рендеринга (передаём els в функции из render.js) ────────────────
@@ -50,6 +51,11 @@ function activateChat(chatId) {
     refresh.chatsList();
     refresh.messages();
     refresh.docsBtn();
+}
+
+function createNewChatFromButton() {
+    const chat = createChat([]);
+    activateChat(chat.id);
 }
 
 function startChat() {
@@ -147,29 +153,89 @@ function closeDocsModal() { els.docsModal.hidden = true; }
 
 // ─── Чат ─────────────────────────────────────────────────────────────────────
 
+
+function normalizeAnswerText(text) {
+    if (text == null) return "";
+    return String(text)
+        .replace(/^\s*\[\s*$/gm, "")
+        .replace(/^\s*\]\s*$/gm, "")
+        .replace(/\\\[/g, "")
+        .replace(/\\\]/g, "")
+        .replace(/\\\(/g, "")
+        .replace(/\\\)/g, "")
+        .replace(/\\text\{([^}]*)\}/g, "$1")
+        .replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, "($1) / ($2)")
+        .replace(/\\cdot/g, "*")
+        .replace(/\\times/g, "*")
+        .replace(/\\approx/g, "~")
+        .replace(/\\leq/g, "<=")
+        .replace(/\\geq/g, ">=")
+        .replace(/\\%/g, "%")
+        .replace(/\\[a-zA-Z]+/g, "")
+        .replace(/\{([^{}]*)\}/g, "$1")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+}
+
+function cleanStreamText(text) {
+    return normalizeAnswerText((text || "")
+        .replace(/<think>[\s\S]*?<\/think>/g, "")
+        .trim());
+}
+
+function filterNewImages(images, chat) {
+    if (!chat || !Array.isArray(images) || images.length === 0) {
+        return images || [];
+    }
+
+    const shownUrls = new Set(
+        chat.messages
+            .slice(-20)
+            .flatMap(message => message.images || [])
+            .map(image => image.url)
+    );
+
+    return images.filter(image => !shownUrls.has(image.url));
+}
+
+function refreshIfActive(chatId) {
+    if (state.activeChatId === chatId) {
+        refresh.messages();
+    }
+}
+
 async function sendQuestion() {
     const question = els.questionInput.value.trim();
     if (!question) return;
-    if (state.selectedDocumentIds.length === 0) { alert("Сначала выберите документы"); return; }
+    if (state.selectedDocumentIds.length === 0) { alert("\u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u0432\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u044b"); return; }
+
+    const chat = getActiveChat();
+    if (!chat) { alert("\u0421\u043e\u0437\u0434\u0430\u0439\u0442\u0435 \u043d\u043e\u0432\u044b\u0439 \u0447\u0430\u0442"); return; }
+
+    const chatId = chat.id;
+    const documentIds = [...state.selectedDocumentIds];
+    const adviceEnabled = Boolean(els.adviceToggle?.checked);
+    const history = chat.messages.map(m => ({ role: m.role, text: m.text }));
 
     els.sendQuestionBtn.disabled = true;
     els.chatMessages.querySelector(".empty-chat")?.remove();
 
-    const chat = getActiveChat();
     const userMsg = { role: "user", text: question, sources: [], images: [] };
-    if (chat) chat.messages.push(userMsg);
-    state.messages = chat ? chat.messages : state.messages;
+    const assistantMsg = { role: "assistant", text: "", sources: [], images: [], streaming: true };
+    chat.messages.push(userMsg, assistantMsg);
+    state.messages = chat.messages;
+    saveChats();
+
     addMessageElement(els, userMsg);
     els.questionInput.value = "";
 
     const streaming = createStreamingMessage(els);
-    let sources = [], images = [], answerText = "";
+    let sources = [], images = [];
 
     try {
-        const history = state.messages.slice(0, -1).map(m => ({ role: m.role, text: m.text }));
-        const response = await api.askStream(question, state.selectedDocumentIds, history);
+        const response = await api.askStream(question, documentIds, history, adviceEnabled);
 
-        if (!response.ok) throw new Error(`Ошибка: ${response.status}`);
+        if (!response.ok) throw new Error(`\u041e\u0448\u0438\u0431\u043a\u0430: ${response.status}`);
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -181,7 +247,7 @@ async function sendQuestion() {
 
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split("\n");
-            buffer = lines.pop(); // незавершённая строка остаётся в буфере
+            buffer = lines.pop();
 
             for (const line of lines) {
                 if (!line.startsWith("data:")) continue;
@@ -190,18 +256,33 @@ async function sendQuestion() {
                     const event = JSON.parse(raw);
                     if (event.type === "meta") {
                         sources = event.sources || [];
-                        images  = event.images  || [];
+                        images = event.images || [];
                     } else if (event.type === "token") {
-                        streaming.appendToken(event.text);
+                        assistantMsg.text += event.text || "";
+                        if (state.activeChatId === chatId && streaming.isConnected()) {
+                            streaming.appendToken(event.text || "");
+                        }
                     } else if (event.type === "done") {
-                        // Показываем изображения только если модель дала реальный ответ
-                        const hasAnswer = streaming.getRawText().trim().length > 0;
-                        answerText = streaming.finalize(sources, hasAnswer ? images : []);
-                        if (!hasAnswer) images = [];
+                        assistantMsg.text = cleanStreamText(assistantMsg.text);
+                        const hasAnswer = assistantMsg.text.length > 0;
+                        assistantMsg.sources = hasAnswer ? sources : [];
+                        assistantMsg.images = hasAnswer ? filterNewImages(images, chat) : [];
+                        assistantMsg.streaming = false;
+
+                        if (state.activeChatId === chatId && streaming.isConnected()) {
+                            streaming.finalize(assistantMsg.sources, assistantMsg.images);
+                        } else {
+                            refreshIfActive(chatId);
+                        }
                     } else if (event.type === "error") {
-                        streaming.finalize([], []);
-                        answerText = event.text || "Произошла ошибка";
-                        images = [];
+                        assistantMsg.text = event.text || "\u041f\u0440\u043e\u0438\u0437\u043e\u0448\u043b\u0430 \u043e\u0448\u0438\u0431\u043a\u0430";
+                        assistantMsg.sources = [];
+                        assistantMsg.images = [];
+                        assistantMsg.streaming = false;
+                        if (state.activeChatId === chatId && streaming.isConnected()) {
+                            streaming.finalize([], []);
+                        }
+                        refreshIfActive(chatId);
                     }
                 } catch (e) {
                     console.warn("SSE parse error:", raw, e);
@@ -209,24 +290,36 @@ async function sendQuestion() {
             }
         }
 
-        if (!answerText) {
-            streaming.appendToken("В загруженных документах нет информации для ответа на этот вопрос.");
-            answerText = streaming.finalize([], []);
-            images = [];
+        if (assistantMsg.streaming) {
+            assistantMsg.text = cleanStreamText(assistantMsg.text)
+                || "\u0412 \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043d\u043d\u044b\u0445 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u0430\u0445 \u043d\u0435\u0442 \u0438\u043d\u0444\u043e\u0440\u043c\u0430\u0446\u0438\u0438 \u0434\u043b\u044f \u043e\u0442\u0432\u0435\u0442\u0430 \u043d\u0430 \u044d\u0442\u043e\u0442 \u0432\u043e\u043f\u0440\u043e\u0441.";
+            assistantMsg.sources = assistantMsg.text ? sources : [];
+            assistantMsg.images = filterNewImages(images, chat);
+            assistantMsg.streaming = false;
+            if (state.activeChatId === chatId && streaming.isConnected()) {
+                streaming.finalize(assistantMsg.sources, assistantMsg.images);
+            } else {
+                refreshIfActive(chatId);
+            }
         }
 
-        // Фильтруем изображения которые уже показывали в последних 10 обменах
-        images = filterNewImages(images);
-
-        console.log("[RAG] answer:", answerText, "| sources:", sources.length, "| images:", images.length);
-
-        const reply = { role: "assistant", text: answerText, sources, images };
-        if (chat) { chat.messages.push(reply); saveChats(); }
-        tryGenerateTitle(refresh.chatsList);
+        saveChats();
+        if (state.activeChatId === chatId) {
+            tryGenerateTitle(refresh.chatsList);
+        }
 
     } catch (e) {
-        console.error("Ошибка стриминга", e);
-        streaming.finalize([], []);
+        console.error("\u041e\u0448\u0438\u0431\u043a\u0430 \u0441\u0442\u0440\u0438\u043c\u0438\u043d\u0433\u0430", e);
+        assistantMsg.text = e.message || "\u041f\u0440\u043e\u0438\u0437\u043e\u0448\u043b\u0430 \u043e\u0448\u0438\u0431\u043a\u0430";
+        assistantMsg.sources = [];
+        assistantMsg.images = [];
+        assistantMsg.streaming = false;
+        saveChats();
+        if (state.activeChatId === chatId && streaming.isConnected()) {
+            streaming.finalize([], []);
+        } else {
+            refreshIfActive(chatId);
+        }
     } finally {
         els.sendQuestionBtn.disabled = false;
     }
@@ -284,7 +377,7 @@ els.applyDocsBtn.addEventListener("click", () => {
 
 els.clearSelectionBtn.addEventListener("click", clearSelection);
 els.searchInput.addEventListener("input", debounce(refresh.documents, 200));
-els.newChatBtn.addEventListener("click", openDocsModal);
+els.newChatBtn.addEventListener("click", createNewChatFromButton);
 
 // ─── Инициализация ────────────────────────────────────────────────────────────
 
