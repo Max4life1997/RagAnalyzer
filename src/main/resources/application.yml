@@ -1,0 +1,33 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: rag-analyzer
+
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/rag_analyzer
+    username: rag_user
+    password: rag_password
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+app:
+  storage:
+    documents-dir: storage/documents
+
+ollama:
+  base-url: http://localhost:11434
+  embedding-model: nomic-embed-text:latest
+  chat-model: qwen3.5:latest

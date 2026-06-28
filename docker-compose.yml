@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: rag-analyzer-postgres
+    environment:
+      POSTGRES_DB: rag_analyzer
+      POSTGRES_USER: rag_user
+      POSTGRES_PASSWORD: rag_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - rag_analyzer_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  rag_analyzer_postgres_data:
+
+ollama:
+  base-url: http://localhost:11434
+  embedding-model: nomic-embed-text:latest
