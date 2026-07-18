@@ -1,14 +1,18 @@
 import { api } from "./api.js";
+import { getUser, logout } from "./auth.js";
 import { state, loadChats, saveChats, getActiveChat, createChat, tryGenerateTitle } from "./state.js";
 import {
     debounce, escapeHtml,
     renderDocuments, renderChatsList, rerenderChatMessages,
-    addMessageElement, createStreamingMessage, updateDocsBtnLabel
+    addMessageElement, createStreamingMessage, updateDocsBtnLabel,
+    renderFolderTree, renderFolderBreadcrumb, getDescendantFolderIds
 } from "./render.js";
 
 // ─── DOM-узлы ────────────────────────────────────────────────────────────────
 
 const els = {
+    logoutBtn:          document.getElementById("logoutBtn"),
+    sidebarUserEmail:   document.getElementById("sidebarUserEmail"),
     chatMessages:       document.getElementById("chatMessages"),
     questionInput:      document.getElementById("questionInput"),
     sendQuestionBtn:    document.getElementById("sendQuestionBtn"),
@@ -29,15 +33,159 @@ const els = {
     fileInput:          document.getElementById("fileInput"),
     uploadStatus:       document.getElementById("uploadStatus"),
     adviceToggle:       document.getElementById("adviceToggle"),
+    wikiToggleBtn:      document.getElementById("wikiToggleBtn"),
+    chatSubtitle:       document.querySelector(".chat-header__subtitle"),
+    folderTree:         document.getElementById("folderTree"),
+    folderBreadcrumb:   document.getElementById("folderBreadcrumb"),
+    newFolderBtn:       document.getElementById("newFolderBtn"),
+    deleteSelectedBtn:  document.getElementById("deleteSelectedBtn"),
+    deleteSelectedTreeBtn: document.getElementById("deleteSelectedTreeBtn"),
 };
 
 // ─── Хелперы рендеринга (передаём els в функции из render.js) ────────────────
 
 const refresh = {
     chatsList: () => renderChatsList(els, activateChat),
-    documents: () => renderDocuments(els, toggleDocumentSelection, handleDeleteDocument),
+    documents: () => {
+        renderDocuments(els, toggleDocumentSelection, handleDeleteDocument, handleMoveDocument);
+        const hasSelection = state.selectedDocumentIds.length > 0;
+        els.deleteSelectedBtn.classList.toggle("is-hidden", !hasSelection);
+        els.deleteSelectedBtn.textContent = hasSelection
+            ? `Удалить выбранные (${state.selectedDocumentIds.length})`
+            : "Удалить выбранные";
+        els.deleteSelectedTreeBtn.classList.toggle("is-hidden", !hasSelection);
+        els.deleteSelectedTreeBtn.title = hasSelection
+            ? `Удалить выбранные (${state.selectedDocumentIds.length})`
+            : "Удалить выбранные";
+    },
     messages:  () => rerenderChatMessages(els),
     docsBtn:   () => updateDocsBtnLabel(els),
+    wikiBtn:   () => updateWikiBtn(),
+    folders:   () => {
+        renderFolderTree(els, folderTreeHandlers);
+        renderFolderBreadcrumb(els, navigateToFolder);
+    },
+};
+
+function updateWikiBtn() {
+    const chat = getActiveChat();
+    const wikiOn = Boolean(chat?.wikiMode);
+
+    els.wikiToggleBtn.classList.toggle("chat-header__wiki-btn--active", wikiOn);
+    // В Wiki-режиме кнопка "Документы" остаётся видимой — можно сузить поиск до конкретных файлов
+    els.docsBtn.style.display = "";
+
+    if (els.chatSubtitle) {
+        if (wikiOn) {
+            els.chatSubtitle.textContent = state.selectedDocumentIds.length > 0
+                ? "Wiki-режим: поиск по выбранным документам"
+                : "Wiki-режим: поиск по всей вашей библиотеке документов";
+        } else {
+            els.chatSubtitle.textContent = "Выберите документы и начните диалог";
+        }
+    }
+
+    refresh.docsBtn();
+}
+
+function toggleWikiMode() {
+    const chat = getActiveChat();
+    if (!chat) { openDocsModal(); return; }
+    chat.wikiMode = !chat.wikiMode;
+    saveChats();
+    refresh.wikiBtn();
+}
+
+// ─── Папки ───────────────────────────────────────────────────────────────────
+
+async function loadFolders() {
+    try {
+        state.folders = await api.getFolders();
+        refresh.folders();
+        refresh.documents();
+    } catch (e) {
+        console.error("Ошибка загрузки папок", e);
+    }
+}
+
+function navigateToFolder(folderId) {
+    state.currentFolderId = folderId;
+    els.searchInput.value = "";
+    refresh.folders();
+    refresh.documents();
+}
+
+function toggleFolderExpand(folderId) {
+    if (state.expandedFolderIds.has(folderId)) {
+        state.expandedFolderIds.delete(folderId);
+    } else {
+        state.expandedFolderIds.add(folderId);
+    }
+    refresh.folders();
+}
+
+// Выбор/снятие выбора всех документов внутри папки (и подпапок) для текущего чата
+function toggleFolderSelection(docIdsInFolder, currentlyChecked) {
+    if (currentlyChecked) {
+        state.selectedDocumentIds = state.selectedDocumentIds.filter(id => !docIdsInFolder.includes(id));
+    } else {
+        const toAdd = docIdsInFolder.filter(id => !state.selectedDocumentIds.includes(id));
+        state.selectedDocumentIds = [...state.selectedDocumentIds, ...toAdd];
+    }
+    refresh.folders();
+    refresh.documents();
+}
+
+async function createFolderPrompt() {
+    const name = prompt("Название новой папки:");
+    if (!name || !name.trim()) return;
+    try {
+        await api.createFolder(name.trim(), state.currentFolderId);
+        await loadFolders();
+    } catch (e) {
+        alert(`Ошибка создания папки: ${e.message}`);
+    }
+}
+
+async function renameFolderHandler(folderId, newName) {
+    try {
+        await api.renameFolder(folderId, newName);
+        await loadFolders();
+    } catch (e) {
+        alert(`Ошибка переименования: ${e.message}`);
+        await loadFolders();
+    }
+}
+
+async function deleteFolderHandler(folderId, folderName) {
+    if (!confirm(`Удалить папку «${folderName}»? Документы внутри переедут в корень.`)) return;
+    try {
+        await api.deleteFolder(folderId);
+        if (state.currentFolderId === folderId) state.currentFolderId = null;
+        await loadFolders();
+        await loadDocuments();
+    } catch (e) {
+        alert(`Ошибка удаления папки: ${e.message}`);
+    }
+}
+
+async function handleMoveDocument(documentId, folderId) {
+    try {
+        await api.moveDocument(documentId, folderId);
+        await loadDocuments();
+    } catch (e) {
+        alert(`Ошибка перемещения: ${e.message}`);
+        refresh.documents();
+    }
+}
+
+const folderTreeHandlers = {
+    onNavigate: navigateToFolder,
+    onToggleExpand: toggleFolderExpand,
+    onToggleFolderSelect: toggleFolderSelection,
+    onToggleDocument: toggleDocumentSelection,
+    onRename: renameFolderHandler,
+    onDelete: deleteFolderHandler,
 };
 
 // ─── Управление чатами ───────────────────────────────────────────────────────
@@ -51,6 +199,7 @@ function activateChat(chatId) {
     refresh.chatsList();
     refresh.messages();
     refresh.docsBtn();
+    refresh.wikiBtn();
 }
 
 function createNewChatFromButton() {
@@ -66,6 +215,7 @@ function startChat() {
     refresh.chatsList();
     refresh.messages();
     refresh.docsBtn();
+    refresh.wikiBtn();
     closeDocsModal();
 }
 
@@ -76,11 +226,13 @@ function toggleDocumentSelection(documentId) {
     if (idx === -1) state.selectedDocumentIds.push(documentId);
     else            state.selectedDocumentIds.splice(idx, 1);
     refresh.documents();
+    refresh.folders(); // чекбоксы папок зависят от выбора документов
 }
 
 function clearSelection() {
     state.selectedDocumentIds = [];
     refresh.documents();
+    refresh.folders();
 }
 
 let _pollTimer = null;
@@ -89,6 +241,7 @@ async function loadDocuments() {
     try {
         state.documents = await api.getDocuments();
         refresh.documents();
+        refresh.folders();
         scheduleStatusPoll();
     } catch (e) {
         console.error("Ошибка загрузки документов", e);
@@ -113,7 +266,7 @@ function scheduleStatusPoll() {
 function setUploadStatus(msg, type = "info") {
     els.uploadStatus.textContent = msg;
     els.uploadStatus.dataset.type = type;
-    els.uploadStatus.hidden = !msg;
+    els.uploadStatus.classList.toggle("is-hidden", !msg);
 }
 
 async function handleUploadFiles(files) {
@@ -125,7 +278,11 @@ async function handleUploadFiles(files) {
     for (const file of allowed) {
         setUploadStatus(`Загружается ${file.name}… 0%`, "info");
         try {
-            await api.uploadDocument(file, pct => setUploadStatus(`Загружается ${file.name}… ${pct}%`, "info"));
+            await api.uploadDocument(
+                file,
+                pct => setUploadStatus(`Загружается ${file.name}… ${pct}%`, "info"),
+                state.currentFolderId
+            );
             setUploadStatus(`${file.name} — успешно загружен`, "success");
         } catch (e) {
             setUploadStatus(`Ошибка: ${e.message}`, "error");
@@ -146,10 +303,37 @@ async function handleDeleteDocument(documentId, fileName) {
     }
 }
 
+async function handleDeleteSelected() {
+    const ids = [...state.selectedDocumentIds];
+    if (ids.length === 0) return;
+
+    const word = ids.length === 1 ? "документ" : ids.length < 5 ? "документа" : "документов";
+    if (!confirm(`Удалить ${ids.length} ${word}? Это действие необратимо.`)) return;
+
+    els.deleteSelectedBtn.disabled = true;
+    let failed = 0;
+
+    for (const id of ids) {
+        try {
+            await api.deleteDocument(id);
+        } catch (e) {
+            failed++;
+        }
+    }
+
+    state.selectedDocumentIds = [];
+    await loadDocuments();
+    els.deleteSelectedBtn.disabled = false;
+
+    if (failed > 0) {
+        alert(`Не удалось удалить ${failed} из ${ids.length} документов.`);
+    }
+}
+
 // ─── Модалка ─────────────────────────────────────────────────────────────────
 
-function openDocsModal()  { loadDocuments(); els.docsModal.hidden = false; }
-function closeDocsModal() { els.docsModal.hidden = true; }
+function openDocsModal()  { loadDocuments(); loadFolders(); els.docsModal.classList.remove("is-hidden"); }
+function closeDocsModal() { els.docsModal.classList.add("is-hidden"); }
 
 // ─── Чат ─────────────────────────────────────────────────────────────────────
 
@@ -177,10 +361,17 @@ function normalizeAnswerText(text) {
         .trim();
 }
 
+// Обрезает текст на первом блоке из 3+ символов CJK (китайский/японский/корейский) —
+// модель иногда продолжает генерацию и съезжает в другой язык после ответа
+function cutAtForeignScript(text) {
+    const match = text.match(/[一-鿿぀-ヿ가-힯]{3,}/);
+    return match ? text.slice(0, match.index) : text;
+}
+
 function cleanStreamText(text) {
-    return normalizeAnswerText((text || "")
+    return normalizeAnswerText(cutAtForeignScript((text || "")
         .replace(/<think>[\s\S]*?<\/think>/g, "")
-        .trim());
+        .trim()));
 }
 
 function filterNewImages(images, chat) {
@@ -207,10 +398,16 @@ function refreshIfActive(chatId) {
 async function sendQuestion() {
     const question = els.questionInput.value.trim();
     if (!question) return;
-    if (state.selectedDocumentIds.length === 0) { alert("\u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u0432\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u044b"); return; }
 
     const chat = getActiveChat();
     if (!chat) { alert("\u0421\u043e\u0437\u0434\u0430\u0439\u0442\u0435 \u043d\u043e\u0432\u044b\u0439 \u0447\u0430\u0442"); return; }
+
+    const wikiMode = Boolean(chat.wikiMode);
+
+    if (!wikiMode && state.selectedDocumentIds.length === 0) {
+        alert("\u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u0432\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u044b \u0438\u043b\u0438 \u0432\u043a\u043b\u044e\u0447\u0438\u0442\u0435 Wiki-\u0440\u0435\u0436\u0438\u043c");
+        return;
+    }
 
     const chatId = chat.id;
     const documentIds = [...state.selectedDocumentIds];
@@ -233,7 +430,7 @@ async function sendQuestion() {
     let sources = [], images = [];
 
     try {
-        const response = await api.askStream(question, documentIds, history, adviceEnabled);
+        const response = await api.askStream(question, documentIds, history, adviceEnabled, wikiMode);
 
         if (!response.ok) throw new Error(`\u041e\u0448\u0438\u0431\u043a\u0430: ${response.status}`);
 
@@ -310,10 +507,12 @@ async function sendQuestion() {
 
     } catch (e) {
         console.error("\u041e\u0448\u0438\u0431\u043a\u0430 \u0441\u0442\u0440\u0438\u043c\u0438\u043d\u0433\u0430", e);
-        assistantMsg.text = e.message || "\u041f\u0440\u043e\u0438\u0437\u043e\u0448\u043b\u0430 \u043e\u0448\u0438\u0431\u043a\u0430";
+        assistantMsg.text = describeNetworkError(e);
         assistantMsg.sources = [];
         assistantMsg.images = [];
         assistantMsg.streaming = false;
+        assistantMsg.failed = true;
+        assistantMsg.retryQuestion = question;
         saveChats();
         if (state.activeChatId === chatId && streaming.isConnected()) {
             streaming.finalize([], []);
@@ -323,6 +522,16 @@ async function sendQuestion() {
     } finally {
         els.sendQuestionBtn.disabled = false;
     }
+}
+
+// \u041f\u0435\u0440\u0435\u0432\u043e\u0434\u0438\u0442 \u0442\u0435\u0445\u043d\u0438\u0447\u0435\u0441\u043a\u0438\u0435 \u043e\u0448\u0438\u0431\u043a\u0438 \u0431\u0440\u0430\u0443\u0437\u0435\u0440\u0430 \u0432 \u043f\u043e\u043d\u044f\u0442\u043d\u044b\u0439 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044e \u0442\u0435\u043a\u0441\u0442
+function describeNetworkError(e) {
+    const raw = (e && e.message || "").toLowerCase();
+    if (raw.includes("network") || raw.includes("failed to fetch") || raw.includes("load failed")) {
+        return "\u26a0\ufe0f \u0421\u043e\u0435\u0434\u0438\u043d\u0435\u043d\u0438\u0435 \u0441 \u0441\u0435\u0440\u0432\u0435\u0440\u043e\u043c \u043f\u0440\u0435\u0440\u0432\u0430\u043b\u043e\u0441\u044c \u0432\u043e \u0432\u0440\u0435\u043c\u044f \u043e\u0442\u0432\u0435\u0442\u0430. " +
+               "\u041e\u0431\u044b\u0447\u043d\u043e \u044d\u0442\u043e \u0437\u043d\u0430\u0447\u0438\u0442, \u0447\u0442\u043e \u0441\u0435\u0440\u0432\u0435\u0440 \u043f\u0435\u0440\u0435\u0437\u0430\u043f\u0443\u0441\u043a\u0430\u0435\u0442\u0441\u044f. \u041f\u043e\u0434\u043e\u0436\u0434\u0438\u0442\u0435 \u043d\u0435\u043c\u043d\u043e\u0433\u043e \u0438 \u043f\u043e\u0432\u0442\u043e\u0440\u0438\u0442\u0435 \u0432\u043e\u043f\u0440\u043e\u0441.";
+    }
+    return "\u26a0\ufe0f \u041f\u0440\u043e\u0438\u0437\u043e\u0448\u043b\u0430 \u043e\u0448\u0438\u0431\u043a\u0430 \u043f\u0440\u0438 \u043f\u043e\u043b\u0443\u0447\u0435\u043d\u0438\u0438 \u043e\u0442\u0432\u0435\u0442\u0430: " + (e?.message || "\u043d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u0430\u044f \u043e\u0448\u0438\u0431\u043a\u0430");
 }
 
 // ─── События ─────────────────────────────────────────────────────────────────
@@ -376,15 +585,41 @@ els.applyDocsBtn.addEventListener("click", () => {
 });
 
 els.clearSelectionBtn.addEventListener("click", clearSelection);
+els.deleteSelectedBtn.addEventListener("click", handleDeleteSelected);
+els.deleteSelectedTreeBtn.addEventListener("click", handleDeleteSelected);
 els.searchInput.addEventListener("input", debounce(refresh.documents, 200));
 els.newChatBtn.addEventListener("click", createNewChatFromButton);
+els.wikiToggleBtn.addEventListener("click", toggleWikiMode);
+els.newFolderBtn.addEventListener("click", createFolderPrompt);
+
+// ─── Кнопка выхода ───────────────────────────────────────────────────────────
+
+if (els.logoutBtn) {
+    els.logoutBtn.addEventListener("click", () => {
+        if (confirm("Выйти из аккаунта?")) logout();
+    });
+}
+
+// Показываем email текущего пользователя в сайдбаре
+const currentUser = getUser();
+if (currentUser?.email && els.sidebarUserEmail) {
+    els.sidebarUserEmail.textContent = currentUser.email;
+    // Первая буква в аватаре
+    const avatar = document.querySelector(".sidebar__user-avatar");
+    if (avatar) avatar.textContent = currentUser.email[0].toUpperCase();
+}
+
+// Ключ для localStorage чатов — изолируем по userId
+const CHATS_KEY = currentUser?.userId ? `rag_chats_${currentUser.userId}` : "rag_chats";
 
 // ─── Инициализация ────────────────────────────────────────────────────────────
 
-loadChats();
+loadChats(CHATS_KEY);
 refresh.chatsList();
 refresh.docsBtn();
+refresh.wikiBtn();
 loadDocuments();
+// app.js больше не вызывает loadChats() повторно
 
 if (state.chats.length > 0) {
     activateChat(state.chats[0].id);

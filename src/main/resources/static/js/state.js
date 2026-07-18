@@ -13,16 +13,22 @@ export const state = {
     selectedDocumentIds: [],
     messages: [],
     chats: [],
-    activeChatId: null
+    activeChatId: null,
+    folders: [],
+    currentFolderId: null,       // null = корень
+    expandedFolderIds: new Set() // какие папки развёрнуты в дереве
 };
 
+let _chatsKey = "rag_chats";
+
 export function saveChats() {
-    localStorage.setItem("rag_chats", JSON.stringify(state.chats));
+    localStorage.setItem(_chatsKey, JSON.stringify(state.chats));
 }
 
-export function loadChats() {
+export function loadChats(key = "rag_chats") {
+    _chatsKey = key;
     try {
-        state.chats = JSON.parse(localStorage.getItem("rag_chats") || "[]");
+        state.chats = JSON.parse(localStorage.getItem(_chatsKey) || "[]");
     } catch {
         state.chats = [];
     }
@@ -53,12 +59,13 @@ export function getActiveChat() {
     return state.chats.find(c => c.id === state.activeChatId) || null;
 }
 
-export function createChat(documentIds) {
+export function createChat(documentIds, wikiMode = false) {
     const chat = {
         id: createId(),
         name: createChatName(),
         documentIds: [...documentIds],
-        messages: []
+        messages: [],
+        wikiMode
     };
     state.chats.unshift(chat);
     saveChats();

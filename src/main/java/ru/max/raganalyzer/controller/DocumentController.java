@@ -7,6 +7,7 @@ import org.springframework.web.multipart.MultipartFile;
 import ru.max.raganalyzer.dto.ChunkDto;
 import ru.max.raganalyzer.dto.DocumentDto;
 import ru.max.raganalyzer.dto.DocumentUploadResponse;
+import ru.max.raganalyzer.dto.MoveDocumentRequest;
 import ru.max.raganalyzer.service.DocumentService;
 
 import java.util.List;
@@ -26,8 +27,11 @@ public class DocumentController {
             value = "/upload",
             consumes = MediaType.MULTIPART_FORM_DATA_VALUE
     )
-    public DocumentUploadResponse uploadDocument(@RequestParam("file") MultipartFile file) {
-        return documentService.uploadDocument(file);
+    public DocumentUploadResponse uploadDocument(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "folderId", required = false) UUID folderId
+    ) {
+        return documentService.uploadDocument(file, folderId);
     }
 
     @GetMapping
@@ -44,5 +48,10 @@ public class DocumentController {
     public ResponseEntity<Void> deleteDocument(@PathVariable UUID documentId) {
         documentService.deleteDocument(documentId);
         return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/{documentId}/move")
+    public DocumentDto moveDocument(@PathVariable UUID documentId, @RequestBody MoveDocumentRequest request) {
+        return documentService.moveDocument(documentId, request.folderId());
     }
 }

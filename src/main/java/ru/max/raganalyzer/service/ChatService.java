@@ -7,6 +7,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import ru.max.raganalyzer.dto.*;
 import ru.max.raganalyzer.entity.DocumentImageEntity;
 import ru.max.raganalyzer.repository.DocumentImageRepository;
+import ru.max.raganalyzer.security.SecurityUtils;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -47,36 +48,28 @@ public class ChatService {
             throw new IllegalArgumentException("Вопрос не может быть пустым");
         }
 
-        if (request.documentIds() == null || request.documentIds().isEmpty()) {
+        boolean wikiMode = isWikiMode(request);
+
+        if (!wikiMode && (request.documentIds() == null || request.documentIds().isEmpty())) {
             throw new IllegalArgumentException("Нужно выбрать хотя бы один документ");
         }
 
         List<Double> questionEmbedding = embeddingService.createEmbedding(request.question());
 
-        // Ищем раздельно по каждому документу — каждый документ гарантированно представлен
-        int perDocLimit = Math.max(4, ragSearchProperties.getTopK() / Math.max(1, request.documentIds().size()));
-
-        List<SearchResultDto> foundChunks = request.documentIds().stream()
-                .flatMap(docId -> vectorStoreService.findSimilarChunksByDocuments(
-                        questionEmbedding,
-                        List.of(docId),
-                        perDocLimit
-                ).stream())
-                .filter(chunk -> chunk.distance() <= ragSearchProperties.getMaxDistance())
-                .toList();
-
-        // Группируем по документу и считаем среднюю дистанцию — более релевантный документ идёт первым
-        Map<UUID, List<SearchResultDto>> byDocument = foundChunks.stream()
-                .collect(Collectors.groupingBy(SearchResultDto::documentId));
-
-        // Сортируем документы по средней дистанции их чанков
-        List<SearchResultDto> relevantChunks = byDocument.values().stream()
-                .sorted(Comparator.comparingDouble(
-                        chunks -> chunks.stream().mapToDouble(SearchResultDto::distance).average().orElse(1.0)
-                ))
-                .flatMap(List::stream)
-                .limit(ragSearchProperties.getTopK())
-                .toList();
+        List<SearchResultDto> relevantChunks;
+        if (wikiMode) {
+            UUID userId = getCurrentUserIdOrNull();
+            if (userId == null) {
+                throw new IllegalArgumentException("Wiki-режим доступен только авторизованным пользователям");
+            }
+            relevantChunks = vectorStoreService.findSimilarChunksForUser(
+                            questionEmbedding, userId, request.documentIds(), ragSearchProperties.getWikiTopK())
+                    .stream()
+                    .filter(c -> c.distance() <= ragSearchProperties.getMaxDistance())
+                    .toList();
+        } else {
+            relevantChunks = findRelevantChunks(request, questionEmbedding);
+        }
 
         if (relevantChunks.isEmpty()) {
             return new AskResponse(
@@ -112,35 +105,36 @@ public class ChatService {
 
     public SseEmitter askStream(AskRequest request) {
         SseEmitter emitter = new SseEmitter(120_000L);
+        boolean wikiMode = isWikiMode(request);
+
+        // SecurityContext хранится в ThreadLocal — захватываем userId здесь,
+        // в потоке запроса, до ухода в executor.submit() на отдельном (виртуальном) потоке
+        UUID currentUserId = wikiMode ? getCurrentUserIdOrNull() : null;
 
         executor.submit(() -> {
             try {
                 if (request.question() == null || request.question().isBlank()
-                        || request.documentIds() == null || request.documentIds().isEmpty()) {
+                        || (!wikiMode && (request.documentIds() == null || request.documentIds().isEmpty()))) {
                     emitter.send(SseEmitter.event().data(StreamEvent.error("Некорректный запрос")));
+                    emitter.complete();
+                    return;
+                }
+
+                if (wikiMode && currentUserId == null) {
+                    emitter.send(SseEmitter.event().data(StreamEvent.error("Wiki-режим доступен только авторизованным пользователям")));
                     emitter.complete();
                     return;
                 }
 
                 List<Double> questionEmbedding = embeddingService.createEmbedding(request.question());
 
-                int perDocLimit = Math.max(4, ragSearchProperties.getTopK() / Math.max(1, request.documentIds().size()));
-
-                List<SearchResultDto> foundChunks = request.documentIds().stream()
-                        .flatMap(docId -> vectorStoreService.findSimilarChunksByDocuments(
-                                questionEmbedding, List.of(docId), perDocLimit).stream())
-                        .filter(c -> c.distance() <= ragSearchProperties.getMaxDistance())
-                        .toList();
-
-                Map<UUID, List<SearchResultDto>> byDocument = foundChunks.stream()
-                        .collect(Collectors.groupingBy(SearchResultDto::documentId));
-
-                List<SearchResultDto> relevantChunks = byDocument.values().stream()
-                        .sorted(Comparator.comparingDouble(
-                                chunks -> chunks.stream().mapToDouble(SearchResultDto::distance).average().orElse(1.0)))
-                        .flatMap(List::stream)
-                        .limit(ragSearchProperties.getTopK())
-                        .toList();
+                List<SearchResultDto> relevantChunks = wikiMode
+                        ? vectorStoreService.findSimilarChunksForUser(
+                                questionEmbedding, currentUserId, request.documentIds(), ragSearchProperties.getWikiTopK())
+                            .stream()
+                            .filter(c -> c.distance() <= ragSearchProperties.getMaxDistance())
+                            .toList()
+                        : findRelevantChunks(request, questionEmbedding);
 
                 if (relevantChunks.isEmpty()) {
                     emitter.send(SseEmitter.event().data(
@@ -200,10 +194,46 @@ public class ChatService {
         return emitter;
     }
 
-    // Собираем изображения со страниц, которые стали источниками ответа
     private boolean isAdviceEnabled(AskRequest request) {
         return Boolean.TRUE.equals(request.adviceEnabled());
     }
+
+    private boolean isWikiMode(AskRequest request) {
+        return Boolean.TRUE.equals(request.wikiMode());
+    }
+
+    private UUID getCurrentUserIdOrNull() {
+        try {
+            return SecurityUtils.currentUserId();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    // Общая логика поиска для обычного режима (по выбранным документам).
+    // Ищем раздельно по каждому документу — каждый документ гарантированно представлен,
+    // затем сортируем документы по средней дистанции их чанков.
+    private List<SearchResultDto> findRelevantChunks(AskRequest request, List<Double> questionEmbedding) {
+        int perDocLimit = Math.max(4, ragSearchProperties.getTopK() / Math.max(1, request.documentIds().size()));
+
+        List<SearchResultDto> foundChunks = request.documentIds().stream()
+                .flatMap(docId -> vectorStoreService.findSimilarChunksByDocuments(
+                        questionEmbedding, List.of(docId), perDocLimit).stream())
+                .filter(c -> c.distance() <= ragSearchProperties.getMaxDistance())
+                .toList();
+
+        Map<UUID, List<SearchResultDto>> byDocument = foundChunks.stream()
+                .collect(Collectors.groupingBy(SearchResultDto::documentId));
+
+        return byDocument.values().stream()
+                .sorted(Comparator.comparingDouble(
+                        chunks -> chunks.stream().mapToDouble(SearchResultDto::distance).average().orElse(1.0)))
+                .flatMap(List::stream)
+                .limit(ragSearchProperties.getTopK())
+                .toList();
+    }
+
+    // Собираем изображения со страниц, которые стали источниками ответа
 
     private boolean shouldAttachImages(String question) {
         if (question == null || question.isBlank()) {

@@ -7,6 +7,7 @@ public record AskRequest(
         String question,
         List<UUID> documentIds,
         List<MessageDto> history,
-        Boolean adviceEnabled
+        Boolean adviceEnabled,
+        Boolean wikiMode
 ) {
 }

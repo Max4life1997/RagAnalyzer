@@ -38,6 +38,12 @@ public class DocumentEntity {
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
+    @Column(name = "user_id")
+    private UUID userId;
+
+    @Column(name = "folder_id")
+    private UUID folderId;
+
     protected DocumentEntity() {
     }
 
@@ -72,9 +78,11 @@ public class DocumentEntity {
         this.errorMessage = errorMessage;
     }
 
-    public UUID getId() {
-        return id;
-    }
+    public UUID getId()     { return id; }
+    public UUID getUserId() { return userId; }
+    public void setUserId(UUID userId) { this.userId = userId; }
+    public UUID getFolderId() { return folderId; }
+    public void setFolderId(UUID folderId) { this.folderId = folderId; }
 
     public String getOriginalFileName() {
         return originalFileName;

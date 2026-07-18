@@ -7,13 +7,17 @@ import org.springframework.scheduling.annotation.EnableAsync;
 import ru.max.raganalyzer.config.FileStorageProperties;
 import ru.max.raganalyzer.config.OllamaProperties;
 import ru.max.raganalyzer.config.RagSearchProperties;
+import ru.max.raganalyzer.config.JwtProperties;
+import ru.max.raganalyzer.config.TelegramBotProperties;
 
 @SpringBootApplication
 @EnableAsync
 @EnableConfigurationProperties({
         FileStorageProperties.class,
         OllamaProperties.class,
-        RagSearchProperties.class
+        RagSearchProperties.class,
+        TelegramBotProperties.class,
+        JwtProperties.class
 })
 public class RagAnalyzerApplication {
 

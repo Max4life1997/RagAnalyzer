@@ -12,6 +12,7 @@ public record DocumentDto(
         int chunksCount,
         String status,
         String errorMessage,
-        LocalDateTime createdAt
+        LocalDateTime createdAt,
+        UUID folderId
 ) {
 }

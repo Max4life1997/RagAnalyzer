@@ -8,7 +8,39 @@
     <link rel="stylesheet" href="/css/prism.min.css" />
 </head>
 <body>
-<div class="app-shell">
+
+<!-- ─── Экран авторизации ─── -->
+<div id="authScreen" class="auth-screen">
+    <div class="auth-box">
+        <div class="auth-logo">
+            <div class="logo-badge" style="width:48px;height:48px;font-size:20px;">R</div>
+            <h1 class="auth-title">RagAnalyzer</h1>
+        </div>
+        <p class="auth-subtitle">Войдите чтобы продолжить</p>
+
+        <div class="auth-tabs">
+            <button class="auth-tab auth-tab--active" id="tabLogin">Вход</button>
+            <button class="auth-tab" id="tabRegister">Регистрация</button>
+        </div>
+
+        <form id="authForm" class="auth-form" autocomplete="on" novalidate>
+            <div class="auth-field">
+                <label class="auth-label">Email</label>
+                <input id="authEmail" class="input" type="email" autocomplete="email"
+                       placeholder="you@example.com" required />
+            </div>
+            <div class="auth-field">
+                <label class="auth-label">Пароль</label>
+                <input id="authPassword" class="input" type="password" autocomplete="current-password"
+                       placeholder="Минимум 8 символов" required minlength="8" />
+            </div>
+            <div id="authError" class="auth-error is-hidden"></div>
+            <button type="submit" class="btn btn--primary btn--full" id="authSubmit">Войти</button>
+        </form>
+    </div>
+</div>
+
+<div class="app-shell is-hidden" id="appShell">
 
     <!-- ─── Левый сайдбар ─── -->
     <aside class="sidebar" id="navSidebar">
@@ -28,6 +60,19 @@
         <div class="sidebar__chats">
             <div class="sidebar__chats-label"><span class="sidebar__label">Чаты</span></div>
             <div id="chatsList" class="sidebar__chats-list"></div>
+        </div>
+
+        <div class="sidebar__bottom-bar">
+            <div class="sidebar__user-info">
+                <div class="sidebar__user-avatar">U</div>
+                <span class="sidebar__label sidebar__user-email" id="sidebarUserEmail"></span>
+            </div>
+            <button class="sidebar__logout" id="logoutBtn" title="Выйти">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                    <path d="M6 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3M10 11l3-3-3-3M13 8H6"
+                          stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </button>
         </div>
 
         <button class="sidebar__toggle" id="navSidebarToggle" title="Свернуть">
@@ -51,14 +96,24 @@
                         <h2 id="chatTitle" class="chat-header__title">RagAnalyzer</h2>
                         <p class="chat-header__subtitle">Выберите документы и начните диалог</p>
                     </div>
-                    <button id="docsBtn" class="chat-header__docs-btn">
-                        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-                            <path d="M3 2h7l3 3v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"
-                                  stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
-                            <path d="M10 2v4h3" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
-                        </svg>
-                        <span id="docsBtnLabel">Документы</span>
-                    </button>
+                    <div class="chat-header__actions">
+                        <button id="wikiToggleBtn" class="chat-header__wiki-btn" title="Искать по всей библиотеке документов, а не только по выбранным">
+                            <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                                <circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.4"/>
+                                <path d="M2 8h12M8 1.7c1.6 1.7 2.4 4 2.4 6.3S9.6 12.6 8 14.3C6.4 12.6 5.6 10.3 5.6 8S6.4 3.4 8 1.7z"
+                                      stroke="currentColor" stroke-width="1.4"/>
+                            </svg>
+                            <span>Wiki</span>
+                        </button>
+                        <button id="docsBtn" class="chat-header__docs-btn">
+                            <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                                <path d="M3 2h7l3 3v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"
+                                      stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+                                <path d="M10 2v4h3" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+                            </svg>
+                            <span id="docsBtnLabel">Документы</span>
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Сообщения -->
@@ -89,9 +144,9 @@
 </div>
 
 <!-- ─── Модальное окно документов ─── -->
-<div id="docsModal" class="modal" hidden>
+<div id="docsModal" class="modal is-hidden">
     <div class="modal__backdrop" id="docsModalBackdrop"></div>
-    <div class="modal__box">
+    <div class="modal__box modal__box--wide">
         <div class="modal__header">
             <h2 class="modal__title">Документы</h2>
             <button id="docsModalClose" class="modal__close" title="Закрыть">
@@ -101,44 +156,70 @@
             </button>
         </div>
 
-        <!-- Загрузка -->
-        <div id="dropzone" class="dropzone">
-            <input id="fileInput" type="file" accept=".pdf,.txt,.docx" multiple hidden />
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                <polyline points="17 8 12 3 7 8"/>
-                <line x1="12" y1="3" x2="12" y2="15"/>
-            </svg>
-            <div class="dropzone__text">Перетащите файл или <span class="dropzone__link">нажмите для выбора</span></div>
-            <div class="dropzone__hint">.pdf, .txt, .docx — до 20 МБ</div>
-        </div>
-        <div id="uploadStatus" class="upload-status" hidden></div>
+        <div class="docs-modal__body">
+            <!-- ─── Дерево папок ─── -->
+            <div class="docs-modal__folders">
+                <div class="docs-modal__folders-header">
+                    <span>Папки</span>
+                    <div class="docs-modal__folders-actions">
+                        <button id="deleteSelectedTreeBtn" class="docs-modal__new-folder docs-modal__new-folder--danger is-hidden" title="Удалить выбранные">
+                            <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+                                <path d="M2 3.5h10M5.5 3.5V2.5h3v1M5 3.5l.5 8M9 3.5l-.5 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                            </svg>
+                        </button>
+                        <button id="newFolderBtn" class="docs-modal__new-folder" title="Новая папка">
+                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                                <path d="M7 2v10M2 7h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div id="folderTree" class="folder-tree"></div>
+            </div>
 
-        <!-- Поиск -->
-        <input id="searchInput" class="input modal__search" type="text" placeholder="Поиск по названию..."/>
+            <!-- ─── Файлы текущей папки ─── -->
+            <div class="docs-modal__files">
+                <div class="docs-modal__breadcrumb" id="folderBreadcrumb"></div>
 
-        <!-- Таблица документов -->
-        <div class="modal__table-wrap">
-            <table class="documents-table">
-                <thead>
-                <tr>
-                    <th></th>
-                    <th>Документ</th>
-                    <th>Статус</th>
-                    <th>Чанки</th>
-                    <th>Дата</th>
-                    <th></th>
-                </tr>
-                </thead>
-                <tbody id="documentsTableBody"></tbody>
-            </table>
+                <div id="dropzone" class="dropzone">
+                    <input id="fileInput" type="file" accept=".pdf,.txt,.docx" multiple hidden />
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                         stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                    <div class="dropzone__text">Перетащите файл или <span class="dropzone__link">нажмите для выбора</span></div>
+                    <div class="dropzone__hint">.pdf, .txt, .docx — до 20 МБ, загрузится в открытую папку</div>
+                </div>
+                <div id="uploadStatus" class="upload-status is-hidden"></div>
+
+                <input id="searchInput" class="input modal__search" type="text" placeholder="Поиск по названию..."/>
+
+                <div class="modal__table-wrap">
+                    <table class="documents-table">
+                        <thead>
+                        <tr>
+                            <th></th>
+                            <th>Документ</th>
+                            <th>Статус</th>
+                            <th>Чанки</th>
+                            <th>Дата</th>
+                            <th></th>
+                            <th></th>
+                        </tr>
+                        </thead>
+                        <tbody id="documentsTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
         </div>
 
         <!-- Футер -->
         <div class="modal__footer">
             <span id="selectedCount" class="modal__count">Выбрано: 0</span>
             <div class="modal__footer-actions">
+                <button id="deleteSelectedBtn" class="btn btn--danger is-hidden">Удалить выбранные</button>
                 <button id="clearSelectionBtn" class="btn btn--ghost">Сбросить</button>
                 <button id="applyDocsBtn" class="btn btn--primary">Применить</button>
             </div>
@@ -147,6 +228,7 @@
 </div>
 
 <!-- Библиотеки (глобальные, не модульные) -->
+<script type="module" src="/js/auth.js"></script>
 <script src="/js/marked.min.js"></script>
 <script src="/js/prism.min.js"></script>
 <script src="/js/prism-markup.min.js"></script>
@@ -157,7 +239,6 @@
 <script src="/js/prism-sql.min.js"></script>
 <script src="/js/prism-bash.min.js"></script>
 <script src="/js/prism-json.min.js"></script>
-<!-- Приложение (ES-модули) -->
-<script type="module" src="/js/app.js"></script>
+<!-- app.js запускается динамически из auth.js только после успешного входа -->
 </body>
 </html>

@@ -109,15 +109,25 @@ export function renderStatusBadge(status) {
     return `<span class="status-badge ${escapeHtml(cls)}">${label}</span>`;
 }
 
-export function renderDocuments(els, onToggle, onDelete) {
+export function renderDocuments(els, onToggle, onDelete, onMove) {
     const filter = els.searchInput.value.trim().toLowerCase();
-    const filtered = state.documents.filter(d => d.fileName.toLowerCase().includes(filter));
+
+    // Внутри открытой папки показываем только её прямое содержимое.
+    // Если идёт поиск — ищем по всей библиотеке, игнорируя текущую папку.
+    const filtered = state.documents
+        .filter(d => filter || (d.folderId || null) === state.currentFolderId)
+        .filter(d => d.fileName.toLowerCase().includes(filter));
 
     els.documentsTableBody.innerHTML = "";
 
     filtered.forEach(doc => {
         const checked  = state.selectedDocumentIds.includes(doc.id);
         const disabled = doc.status !== STATUS.INDEXED;
+
+        const moveOptions = `<option value="">Корень</option>` +
+            state.folders.map(f =>
+                `<option value="${f.id}" ${f.id === doc.folderId ? "selected" : ""}>${escapeHtml(f.name)}</option>`
+            ).join("");
 
         const row = document.createElement("tr");
         row.innerHTML = `
@@ -127,9 +137,9 @@ export function renderDocuments(els, onToggle, onDelete) {
                 <div class="doc-meta">${escapeHtml(doc.storedPath)}</div>
             </td>
             <td>${renderStatusBadge(doc.status)}</td>
-            <td>${escapeHtml(doc.sizeBytes)} Б</td>
             <td>${escapeHtml(doc.chunksCount ?? 0)}</td>
             <td>${formatDate(doc.createdAt)}</td>
+            <td><select class="doc-move-select" title="Переместить в папку">${moveOptions}</select></td>
             <td>
                 <button class="btn-delete" title="Удалить документ">
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -141,17 +151,238 @@ export function renderDocuments(els, onToggle, onDelete) {
 
         row.querySelector('input[type="checkbox"]')?.addEventListener("change", () => onToggle(doc.id));
         row.querySelector(".btn-delete")?.addEventListener("click", () => onDelete(doc.id, doc.fileName));
+        row.querySelector(".doc-move-select")?.addEventListener("change", (e) => onMove(doc.id, e.target.value || null));
         els.documentsTableBody.appendChild(row);
     });
 
     els.selectedCount.textContent = `Выбрано: ${state.selectedDocumentIds.length}`;
 }
 
+// ─── Дерево папок ────────────────────────────────────────────────────────────
+
+export function getDescendantFolderIds(folderId, folders) {
+    const result = [folderId];
+    folders.filter(f => f.parentFolderId === folderId)
+        .forEach(child => result.push(...getDescendantFolderIds(child.id, folders)));
+    return result;
+}
+
+export function renderFolderBreadcrumb(els, onNavigate) {
+    const { folders, currentFolderId } = state;
+    els.folderBreadcrumb.innerHTML = "";
+
+    const path = [];
+    let id = currentFolderId;
+    while (id) {
+        const folder = folders.find(f => f.id === id);
+        if (!folder) break;
+        path.unshift(folder);
+        id = folder.parentFolderId;
+    }
+
+    const rootItem = document.createElement("span");
+    rootItem.className = "docs-modal__breadcrumb-item" + (path.length === 0 ? " docs-modal__breadcrumb-item--current" : "");
+    rootItem.textContent = "Корень";
+    rootItem.addEventListener("click", () => onNavigate(null));
+    els.folderBreadcrumb.appendChild(rootItem);
+
+    path.forEach((folder, idx) => {
+        const sep = document.createElement("span");
+        sep.className = "docs-modal__breadcrumb-sep";
+        sep.textContent = "/";
+        els.folderBreadcrumb.appendChild(sep);
+
+        const isCurrent = idx === path.length - 1;
+        const item = document.createElement("span");
+        item.className = "docs-modal__breadcrumb-item" + (isCurrent ? " docs-modal__breadcrumb-item--current" : "");
+        item.textContent = folder.name;
+        if (!isCurrent) item.addEventListener("click", () => onNavigate(folder.id));
+        els.folderBreadcrumb.appendChild(item);
+    });
+}
+
+const FOLDER_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 4a1 1 0 0 1 1-1h3l1.5 1.5H13a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>`;
+const CHEVRON_SVG = `<svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M3 1l4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const TRASH_SVG = `<svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M2 3.5h10M5.5 3.5V2.5h3v1M5 3.5l.5 8M9 3.5l-.5 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>`;
+const FILE_ICON_SVG = `<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M4 1.5h5l3 3v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M9 1.5v3h3" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>`;
+
+// Файл-лист внутри дерева папок (тот же отступ что у папки, но без раскрытия/переименования)
+function buildFileRow(doc, onToggleDocument) {
+    const row = document.createElement("div");
+    const disabled = doc.status !== STATUS.INDEXED;
+    row.className = "folder-node__row file-node__row" + (disabled ? " file-node__row--disabled" : "");
+    row.title = doc.fileName;
+
+    const spacer = document.createElement("span");
+    spacer.className = "folder-node__toggle folder-node__toggle--empty";
+    row.appendChild(spacer);
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "folder-node__checkbox";
+    checkbox.checked = state.selectedDocumentIds.includes(doc.id);
+    checkbox.disabled = disabled;
+    checkbox.addEventListener("click", (e) => { e.stopPropagation(); onToggleDocument(doc.id); });
+    row.appendChild(checkbox);
+
+    const icon = document.createElement("span");
+    icon.className = "folder-node__icon";
+    icon.innerHTML = FILE_ICON_SVG;
+    row.appendChild(icon);
+
+    const nameEl = document.createElement("span");
+    nameEl.className = "folder-node__name";
+    nameEl.textContent = doc.fileName;
+    row.appendChild(nameEl);
+
+    if (!disabled) row.addEventListener("click", () => onToggleDocument(doc.id));
+
+    return row;
+}
+
+function buildFolderRow({ name, isRoot, active, checked, hasChildren, expanded, onNavigate, onToggleExpand, onToggleCheck, onRename, onDelete }) {
+    const row = document.createElement("div");
+    row.className = "folder-node__row" + (active ? " folder-node__row--active" : "");
+
+    const toggle = document.createElement("span");
+    toggle.className = "folder-node__toggle" +
+        (hasChildren ? (expanded ? " folder-node__toggle--expanded" : "") : " folder-node__toggle--empty");
+    toggle.innerHTML = CHEVRON_SVG;
+    if (hasChildren) toggle.addEventListener("click", (e) => { e.stopPropagation(); onToggleExpand(); });
+    row.appendChild(toggle);
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "folder-node__checkbox";
+    checkbox.checked = checked;
+    checkbox.addEventListener("click", (e) => { e.stopPropagation(); onToggleCheck(); });
+    row.appendChild(checkbox);
+
+    const icon = document.createElement("span");
+    icon.className = "folder-node__icon";
+    icon.innerHTML = FOLDER_ICON_SVG;
+    row.appendChild(icon);
+
+    const nameEl = document.createElement("span");
+    nameEl.className = "folder-node__name";
+    nameEl.textContent = name;
+    row.appendChild(nameEl);
+
+    row.addEventListener("click", onNavigate);
+
+    if (!isRoot) {
+        nameEl.addEventListener("dblclick", (e) => {
+            e.stopPropagation();
+            nameEl.contentEditable = "true";
+            nameEl.focus();
+            const range = document.createRange();
+            range.selectNodeContents(nameEl);
+            window.getSelection().removeAllRanges();
+            window.getSelection().addRange(range);
+        });
+        nameEl.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") { e.preventDefault(); nameEl.blur(); }
+            if (e.key === "Escape") { nameEl.textContent = name; nameEl.blur(); }
+        });
+        nameEl.addEventListener("blur", () => {
+            nameEl.contentEditable = "false";
+            const newName = nameEl.textContent.trim();
+            if (newName && newName !== name) onRename(newName);
+            else nameEl.textContent = name;
+        });
+
+        const del = document.createElement("button");
+        del.className = "folder-node__delete";
+        del.title = "Удалить папку";
+        del.innerHTML = TRASH_SVG;
+        del.addEventListener("click", (e) => { e.stopPropagation(); onDelete(); });
+        row.appendChild(del);
+    }
+
+    return row;
+}
+
+function buildFolderNode(folder, handlers) {
+    const { documents, selectedDocumentIds, currentFolderId, expandedFolderIds, folders } = state;
+
+    const descendantIds = getDescendantFolderIds(folder.id, folders);
+    const docIdsInFolder = documents.filter(d => descendantIds.includes(d.folderId)).map(d => d.id);
+    const checked = docIdsInFolder.length > 0 && docIdsInFolder.every(id => selectedDocumentIds.includes(id));
+    const hasSubfolders = folders.some(f => f.parentFolderId === folder.id);
+    const hasOwnDocs = documents.some(d => (d.folderId || null) === folder.id);
+    const hasChildren = hasSubfolders || hasOwnDocs;
+    const expanded = expandedFolderIds.has(folder.id);
+
+    const wrap = document.createElement("div");
+    wrap.className = "folder-node";
+
+    const row = buildFolderRow({
+        name: folder.name,
+        isRoot: false,
+        active: currentFolderId === folder.id,
+        checked,
+        hasChildren,
+        expanded,
+        onNavigate: () => handlers.onNavigate(folder.id),
+        onToggleExpand: () => handlers.onToggleExpand(folder.id),
+        onToggleCheck: () => handlers.onToggleFolderSelect(docIdsInFolder, checked),
+        onRename: (newName) => handlers.onRename(folder.id, newName),
+        onDelete: () => handlers.onDelete(folder.id, folder.name),
+    });
+    wrap.appendChild(row);
+
+    const childDocs = documents.filter(d => (d.folderId || null) === folder.id);
+
+    if (expanded && (hasChildren || childDocs.length > 0)) {
+        const childrenContainer = document.createElement("div");
+        childrenContainer.className = "folder-node__children";
+        folders.filter(f => f.parentFolderId === folder.id)
+            .forEach(child => childrenContainer.appendChild(buildFolderNode(child, handlers)));
+        childDocs.forEach(doc => childrenContainer.appendChild(buildFileRow(doc, handlers.onToggleDocument)));
+        wrap.appendChild(childrenContainer);
+    }
+
+    return wrap;
+}
+
+export function renderFolderTree(els, handlers) {
+    const { folders, documents, selectedDocumentIds, currentFolderId } = state;
+    els.folderTree.innerHTML = "";
+
+    const allDocIds = documents.map(d => d.id);
+    const rootChecked = allDocIds.length > 0 && allDocIds.every(id => selectedDocumentIds.includes(id));
+
+    const rootRow = buildFolderRow({
+        name: "Корень",
+        isRoot: true,
+        active: currentFolderId === null,
+        checked: rootChecked,
+        hasChildren: folders.some(f => !f.parentFolderId),
+        expanded: true,
+        onNavigate: () => handlers.onNavigate(null),
+        onToggleCheck: () => handlers.onToggleFolderSelect(allDocIds, rootChecked),
+    });
+    els.folderTree.appendChild(rootRow);
+
+    const childrenContainer = document.createElement("div");
+    childrenContainer.className = "folder-node__children";
+    folders.filter(f => !f.parentFolderId)
+        .forEach(folder => childrenContainer.appendChild(buildFolderNode(folder, handlers)));
+    documents.filter(d => !d.folderId)
+        .forEach(doc => childrenContainer.appendChild(buildFileRow(doc, handlers.onToggleDocument)));
+    els.folderTree.appendChild(childrenContainer);
+}
+
 export function updateDocsBtnLabel(els) {
     const count = state.selectedDocumentIds.length;
-    els.docsBtnLabel.textContent = count === 0
-        ? "Документы"
-        : `${count} ${count === 1 ? "документ" : count < 5 ? "документа" : "документов"}`;
+    const chat = getActiveChat();
+
+    if (count === 0) {
+        // В Wiki-режиме без выбора файлов поиск идёт по всей библиотеке — поясняем это в лейбле
+        els.docsBtnLabel.textContent = chat?.wikiMode ? "Все документы" : "Документы";
+    } else {
+        els.docsBtnLabel.textContent = `${count} ${count === 1 ? "документ" : count < 5 ? "документа" : "документов"}`;
+    }
 }
 
 // ─── Рендеринг чатов ─────────────────────────────────────────────────────────

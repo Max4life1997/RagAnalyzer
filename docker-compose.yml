@@ -8,12 +8,30 @@ services:
       POSTGRES_PASSWORD: rag_password
     ports:
       - "5432:5432"
+    restart: unless-stopped
     volumes:
       - rag_analyzer_postgres_data:/var/lib/postgresql/data
+
+  ollama:
+    base-url: http://localhost:11434
+    embedding-model: nomic-embed-text:latest
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    container_name: n8n
+    ports:
+      - "5678:5678"
+    environment:
+      - TZ=Europe/Moscow
+      - GENERIC_TIMEZONE=Europe/Moscow
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+    volumes:
+      - n8n_data:/home/node/.n8n
+    restart: unless-stopped
 
 volumes:
   rag_analyzer_postgres_data:
 
-ollama:
-  base-url: http://localhost:11434
-  embedding-model: nomic-embed-text:latest
+

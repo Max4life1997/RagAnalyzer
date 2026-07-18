@@ -11,6 +11,8 @@ import ru.max.raganalyzer.dto.DocumentUploadResponse;
 import ru.max.raganalyzer.entity.DocumentEntity;
 import ru.max.raganalyzer.repository.DocumentChunkRepository;
 import ru.max.raganalyzer.repository.DocumentRepository;
+import ru.max.raganalyzer.repository.FolderRepository;
+import ru.max.raganalyzer.security.SecurityUtils;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -24,23 +26,31 @@ public class DocumentService {
     private final DocumentChunkRepository documentChunkRepository;
     private final DocumentIndexingService documentIndexingService;
     private final ImageExtractionService imageExtractionService;
+    private final FolderRepository folderRepository;
 
     public DocumentService(
             FileStorageService fileStorageService,
             DocumentRepository documentRepository,
             DocumentChunkRepository documentChunkRepository,
             DocumentIndexingService documentIndexingService,
-            ImageExtractionService imageExtractionService
+            ImageExtractionService imageExtractionService,
+            FolderRepository folderRepository
     ) {
         this.fileStorageService = fileStorageService;
         this.documentRepository = documentRepository;
         this.documentChunkRepository = documentChunkRepository;
         this.documentIndexingService = documentIndexingService;
         this.imageExtractionService = imageExtractionService;
+        this.folderRepository = folderRepository;
     }
 
     @Transactional
     public DocumentUploadResponse uploadDocument(MultipartFile file) {
+        return uploadDocument(file, null);
+    }
+
+    @Transactional
+    public DocumentUploadResponse uploadDocument(MultipartFile file, UUID folderId) {
         validateFile(file);
 
         Path storedPath = fileStorageService.save(file);
@@ -51,6 +61,19 @@ public class DocumentService {
                 file.getSize(),
                 0
         );
+
+        // Привязываем документ к текущему пользователю
+        UUID userId = getCurrentUserId();
+        if (userId != null) {
+            document.setUserId(userId);
+        }
+
+        if (folderId != null) {
+            if (userId == null || !folderRepository.existsByIdAndUserId(folderId, userId)) {
+                throw new IllegalArgumentException("Папка не найдена");
+            }
+            document.setFolderId(folderId);
+        }
 
         DocumentEntity savedDocument = documentRepository.save(document);
         scheduleIndexingAfterCommit(savedDocument.getId());
@@ -71,10 +94,11 @@ public class DocumentService {
 
     @Transactional(readOnly = true)
     public List<DocumentDto> getAllDocuments() {
-        return documentRepository.findAll()
-                .stream()
-                .map(this::toDocumentDto)
-                .toList();
+        UUID userId = getCurrentUserId();
+        List<DocumentEntity> docs = (userId != null)
+                ? documentRepository.findByUserId(userId)
+                : documentRepository.findAll(); // Telegram-бот
+        return docs.stream().map(this::toDocumentDto).toList();
     }
 
     @Transactional(readOnly = true)
@@ -96,13 +120,44 @@ public class DocumentService {
 
     @Transactional
     public void deleteDocument(UUID documentId) {
-        DocumentEntity document = documentRepository.findById(documentId)
-                .orElseThrow(() -> new IllegalArgumentException("Document not found: " + documentId));
+        UUID userId = getCurrentUserId();
+        DocumentEntity document = (userId != null)
+                ? documentRepository.findByIdAndUserId(documentId, userId)
+                        .orElseThrow(() -> new IllegalArgumentException("Документ не найден или нет доступа"))
+                : documentRepository.findById(documentId)
+                        .orElseThrow(() -> new IllegalArgumentException("Документ не найден"));
 
         documentChunkRepository.deleteByDocumentId(documentId);
         imageExtractionService.deleteImages(documentId);
         documentRepository.deleteById(documentId);
         fileStorageService.deleteFile(document.getStoredPath());
+    }
+
+    @Transactional
+    public DocumentDto moveDocument(UUID documentId, UUID folderId) {
+        UUID userId = getCurrentUserId();
+        DocumentEntity document = (userId != null)
+                ? documentRepository.findByIdAndUserId(documentId, userId)
+                        .orElseThrow(() -> new IllegalArgumentException("Документ не найден или нет доступа"))
+                : documentRepository.findById(documentId)
+                        .orElseThrow(() -> new IllegalArgumentException("Документ не найден"));
+
+        if (folderId != null) {
+            if (userId == null || !folderRepository.existsByIdAndUserId(folderId, userId)) {
+                throw new IllegalArgumentException("Папка не найдена");
+            }
+        }
+
+        document.setFolderId(folderId);
+        return toDocumentDto(documentRepository.save(document));
+    }
+
+    private UUID getCurrentUserId() {
+        try {
+            return SecurityUtils.currentUserId();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private void scheduleIndexingAfterCommit(UUID documentId) {
@@ -129,7 +184,8 @@ public class DocumentService {
                 document.getChunksCount(),
                 document.getStatus().name(),
                 document.getErrorMessage(),
-                document.getCreatedAt()
+                document.getCreatedAt(),
+                document.getFolderId()
         );
     }
 

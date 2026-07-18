@@ -21,9 +21,17 @@
   <properties>
     <java.version>21</java.version>
     <tika.version>3.3.1</tika.version>
+    <commons-io.version>2.19.0</commons-io.version>
   </properties>
 
   <dependencies>
+    <!-- Явно фиксируем версию commons-io: транзитивно подтягивалась 2.11.0 (через telegrambots),
+         а Tika 3.3.1 требует более новый API (UnsynchronizedByteArrayInputStream.builder()) -->
+    <dependency>
+      <groupId>commons-io</groupId>
+      <artifactId>commons-io</artifactId>
+      <version>${commons-io.version}</version>
+    </dependency>
     <!-- Нужен, чтобы делать REST API: контроллеры, JSON, HTTP endpoints -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
@@ -60,6 +68,38 @@
     <dependency>
       <groupId>org.flywaydb</groupId>
       <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
+
+    <!-- Spring Security -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-security</artifactId>
+    </dependency>
+
+    <!-- JWT -->
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-api</artifactId>
+      <version>0.12.6</version>
+    </dependency>
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-impl</artifactId>
+      <version>0.12.6</version>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-jackson</artifactId>
+      <version>0.12.6</version>
+      <scope>runtime</scope>
+    </dependency>
+
+    <!-- Telegram Bot API -->
+    <dependency>
+      <groupId>org.telegram</groupId>
+      <artifactId>telegrambots</artifactId>
+      <version>6.8.0</version>
     </dependency>
 
     <!-- Apache Tika: извлечение текста из PDF, DOCX, TXT и других документов -->

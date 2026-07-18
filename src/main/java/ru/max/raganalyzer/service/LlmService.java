@@ -4,14 +4,16 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
-import ru.max.raganalyzer.client.OllamaGenerateRequest;
-import ru.max.raganalyzer.client.OllamaGenerateResponse;
+import ru.max.raganalyzer.client.OllamaChatMessage;
+import ru.max.raganalyzer.client.OllamaChatRequest;
+import ru.max.raganalyzer.client.OllamaChatResponse;
 import ru.max.raganalyzer.config.OllamaProperties;
 import ru.max.raganalyzer.dto.MessageDto;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -31,20 +33,62 @@ public class LlmService {
                 .build();
     }
 
+    // Останавливаем генерацию как только модель начинает повторять вопрос
+    // или съезжать в другой язык — типичная проблема маленьких моделей
+    private static final List<String> STOP_SEQUENCES = List.of(
+            "\nВопрос:", "\nQuestion:", "\nQ:", "\n问题", "\n答案", "\n问", "\nПользователь:"
+    );
+
+    private static final String SYSTEM_PROMPT = """
+            Отвечай ИСКЛЮЧИТЕЛЬНО на русском языке. Никогда не используй китайский, английский или любой другой язык.
+
+            Контекст документов может быть на английском или другом иностранном языке (например, если документ —
+            книга или статья на английском). Это не повод отвечать на этом языке или вставлять иностранные фразы.
+            ПЕРЕВОДИ на русский абсолютно всё, что попадает в твой ответ: имена должностей, дословные цитаты,
+            термины, названия. Не оставляй ни одного английского/иностранного слова или фразы в финальном ответе,
+            кроме случаев, когда сам термин является собственным именем без устоявшегося перевода (например,
+            "Хогвартс"). Должности и описания переводи полностью, например "Keeper of the Keys and Grounds"
+            нужно перевести как "Хранитель ключей и территории", а не оставлять английский вариант.
+
+            Ты помощник, который отвечает на вопросы по загруженным документам пользователя.
+            В сообщении пользователя будет контекст из документов (помечен "## Документ: название") и сам вопрос.
+
+            Правила:
+            1. Отвечай только на основе предоставленного контекста документов.
+            2. Не придумывай факты, которых нет в контексте — если текст не говорит явно кем кто-то является,
+               не делай предположений (например, не придумывай родственные связи, должности, даты, если они
+               не указаны буквально в контексте).
+            3. Учитывай историю переписки — пользователь может уточнять предыдущий вопрос.
+            4. Отвечай развёрнуто и по существу.
+            5. Используй markdown: **жирный** для терминов, "- " для списков, "> " для цитат из документа
+               (цитаты тоже переводи на русский).
+            6. Не пиши "Ответ:" в начале и не повторяй вопрос пользователя.
+            7. Для вычислений не используй LaTeX/frac/cdot — пиши формулы обычным текстом,
+               например: E = P * i * (1 + i)^n / ((1 + i)^n - 1).
+
+            Если ответа нет ни в одном из документов, напиши строго:
+            В загруженных документах нет информации для ответа на этот вопрос.""";
+
+    private static final String ADVICE_SUFFIX = """
+
+            Дополнительно: после ответа по документам добавь отдельный раздел "Мой взгляд" —
+            твоё осторожное практическое мнение или рекомендацию. Явно отдели его от фактов из документов
+            и не выдумывай факты которых нет в контексте.""";
+
     // Стриминг — отдаёт токены по одному в onToken, в конце вызывает onDone
     public void streamAnswer(String question, String context, List<MessageDto> history, boolean adviceEnabled,
                              Consumer<String> onToken, Runnable onDone) {
-        String prompt = buildPrompt(question, context, history, adviceEnabled);
+        List<OllamaChatMessage> messages = buildMessages(question, context, history, adviceEnabled);
 
-        OllamaGenerateRequest request = new OllamaGenerateRequest(
+        OllamaChatRequest request = new OllamaChatRequest(
                 ollamaProperties.getChatModel(),
-                prompt,
+                messages,
                 true,   // stream = true
-                Map.of("temperature", 0)
+                Map.of("temperature", 0, "stop", STOP_SEQUENCES)
         );
 
         restClient.post()
-                .uri("/api/generate")
+                .uri("/api/chat")
                 .body(request)
                 .exchange((req, res) -> {
                     try (BufferedReader reader = new BufferedReader(
@@ -53,10 +97,11 @@ public class LlmService {
                         while ((line = reader.readLine()) != null) {
                             if (line.isBlank()) continue;
                             try {
-                                OllamaGenerateResponse chunk =
-                                        objectMapper.readValue(line, OllamaGenerateResponse.class);
-                                if (chunk.response() != null && !chunk.response().isEmpty()) {
-                                    onToken.accept(chunk.response());
+                                OllamaChatResponse chunk =
+                                        objectMapper.readValue(line, OllamaChatResponse.class);
+                                if (chunk.message() != null && chunk.message().content() != null
+                                        && !chunk.message().content().isEmpty()) {
+                                    onToken.accept(chunk.message().content());
                                 }
                                 if (chunk.done()) break;
                             } catch (Exception ignored) {}
@@ -82,24 +127,28 @@ public class LlmService {
                 Название:
                 """.formatted(dialog);
 
-        OllamaGenerateRequest request = new OllamaGenerateRequest(
+        OllamaChatRequest request = new OllamaChatRequest(
                 ollamaProperties.getChatModel(),
-                prompt,
+                List.of(
+                        new OllamaChatMessage("system", "Отвечай только на русском языке, кратко, без рассуждений."),
+                        new OllamaChatMessage("user", prompt)
+                ),
                 false,
                 Map.of("temperature", 0)
         );
 
-        OllamaGenerateResponse response = restClient.post()
-                .uri("/api/generate")
+        OllamaChatResponse response = restClient.post()
+                .uri("/api/chat")
                 .body(request)
                 .retrieve()
-                .body(OllamaGenerateResponse.class);
+                .body(OllamaChatResponse.class);
 
-        if (response == null || response.response() == null || response.response().isBlank()) {
+        if (response == null || response.message() == null
+                || response.message().content() == null || response.message().content().isBlank()) {
             return "Диалог";
         }
 
-        return cleanTitle(response.response());
+        return cleanTitle(response.message().content());
     }
 
     private String cleanTitle(String raw) {
@@ -113,85 +162,55 @@ public class LlmService {
     }
 
     public String generateAnswer(String question, String context, List<MessageDto> history, boolean adviceEnabled) {
-        String prompt = buildPrompt(question, context, history, adviceEnabled);
+        List<OllamaChatMessage> messages = buildMessages(question, context, history, adviceEnabled);
 
-        OllamaGenerateRequest request = new OllamaGenerateRequest(
+        OllamaChatRequest request = new OllamaChatRequest(
                 ollamaProperties.getChatModel(),
-                prompt,
+                messages,
                 false,
                 Map.of(
                         "temperature", 0,
-                        "top_p", 0.9
+                        "top_p", 0.9,
+                        "stop", STOP_SEQUENCES
                 )
         );
 
-        OllamaGenerateResponse response = restClient.post()
-                .uri("/api/generate")
+        OllamaChatResponse response = restClient.post()
+                .uri("/api/chat")
                 .body(request)
                 .retrieve()
-                .body(OllamaGenerateResponse.class);
+                .body(OllamaChatResponse.class);
 
-        if (response == null || response.response() == null || response.response().isBlank()) {
+        if (response == null || response.message() == null
+                || response.message().content() == null || response.message().content().isBlank()) {
             throw new RuntimeException("Ollama не вернул ответ");
         }
 
-        return cleanAnswer(response.response());
+        return cleanAnswer(response.message().content());
     }
 
-    private String buildPrompt(String question, String context, List<MessageDto> history, boolean adviceEnabled) {
-        String adviceBlock = adviceEnabled
-                ? """
+    private List<OllamaChatMessage> buildMessages(String question, String context,
+                                                   List<MessageDto> history, boolean adviceEnabled) {
+        List<OllamaChatMessage> messages = new ArrayList<>();
 
-            Advice mode is enabled.
-            After the document-grounded answer, add a separate section named "\u041c\u043e\u0439 \u0432\u0437\u0433\u043b\u044f\u0434".
-            In that section, give your cautious practical view, recommendation, or risk note.
-            Clearly separate it from facts from the documents. Do not invent document facts.
-            """
-                : "";
+        String system = adviceEnabled ? SYSTEM_PROMPT + ADVICE_SUFFIX : SYSTEM_PROMPT;
+        messages.add(new OllamaChatMessage("system", system));
 
-        String historyBlock = "";
-        if (!history.isEmpty()) {
-            StringBuilder sb = new StringBuilder();
-            for (MessageDto msg : history) {
-                String role = "user".equals(msg.role()) ? "Пользователь" : "Ассистент";
-                sb.append(role).append(": ").append(msg.text()).append("\n");
-            }
-            historyBlock = """
-
-            История переписки (для понимания контекста диалога):
-            ---
-            %s---
-            """.formatted(sb);
+        // Реальная история диалога как отдельные сообщения — модель видит её
+        // через свой родной chat-template, а не как текст внутри одного промпта
+        for (MessageDto msg : history) {
+            String role = "user".equals(msg.role()) ? "user" : "assistant";
+            messages.add(new OllamaChatMessage(role, msg.text()));
         }
 
-        return """
-            You are a Russian-language assistant. Always respond in Russian only. Never use Chinese, English, or other languages.
-            For calculations, do not use LaTeX, display-math brackets, or commands named frac, cdot, text. Write formulas as plain readable text, for example: E = P * i * (1 + i)^n / ((1 + i)^n - 1).
-            Ты помощник, который отвечает на вопросы по загруженным документам.
-            Контекст содержит отрывки из одного или нескольких документов, каждый помечен заголовком "## Документ: название".
+        String userMessage = """
+                Контекст из документов:
+                %s
 
-            Правила:
-            1. Внимательно прочитай все документы в контексте и найди ответ в любом из них.
-            2. Учитывай историю переписки — пользователь может уточнять предыдущий вопрос.
-            3. Отвечай развёрнуто и подробно, если вопрос этого требует.
-            4. Отвечай на русском языке.
-            5. Используй markdown для форматирования:
-               - **жирный** — для важных терминов
-               - - пункт — для перечислений
-               - > цитата — для дословных фраз из документа
-            6. Не пиши "Ответ:" в начале.
-            7. Не добавляй информацию, которой нет в контексте.
+                Вопрос: %s""".formatted(context, question);
 
-            Если ответа нет ни в одном из документов, напиши строго:
-            В загруженных документах нет информации для ответа на этот вопрос.
-
-            Контекст:
-            %s
-            %s
-            %s
-            Вопрос: %s
-
-            """.formatted(context, historyBlock, adviceBlock, question);
+        messages.add(new OllamaChatMessage("user", userMessage));
+        return messages;
     }
 
     private String cleanAnswer(String answer) {
@@ -244,7 +263,19 @@ public class LlmService {
         // разбиваем на отдельные строки чтобы marked распознал это как список
         cleaned = normalizeInlineLists(cleaned);
 
-        return cleaned;
+        // Страховка: если stop-последовательность не сработала и модель всё же
+        // съехала в китайский/японский — обрезаем с этого места
+        cleaned = cutAtForeignScript(cleaned);
+
+        return cleaned.trim();
+    }
+
+    // Обрезает текст на первом блоке из 3+ символов CJK (китайский/японский/корейский) подряд
+    private String cutAtForeignScript(String text) {
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("[\\p{IsHan}\\p{IsHiragana}\\p{IsKatakana}\\p{IsHangul}]{3,}")
+                .matcher(text);
+        return m.find() ? text.substring(0, m.start()) : text;
     }
 
     // Если модель пишет "* пункт 1. * пункт 2." в одну строку — разбиваем на строки
@@ -265,67 +296,5 @@ public class LlmService {
                 .replaceFirst("^Ответ\\s*:\\s*", "")
                 .replaceFirst("^Финальный ответ\\s*:\\s*", "")
                 .trim();
-    }
-
-    private String takeFirstUsefulRussianSentence(String text) {
-        if (text == null || text.isBlank()) {
-            return "";
-        }
-
-        String[] sentences = text.split("(?<=[.!?])\\s+");
-
-        for (String sentence : sentences) {
-            String candidate = sentence.trim();
-
-            boolean hasRussian = candidate.matches(".*[А-Яа-яЁё].*");
-            boolean hasBadText = candidate.toLowerCase().contains("draft")
-                    || candidate.toLowerCase().contains("analyze")
-                    || candidate.toLowerCase().contains("context")
-                    || candidate.toLowerCase().contains("question")
-                    || candidate.toLowerCase().contains("check constraints")
-                    || candidate.toLowerCase().contains("final review");
-
-            if (hasRussian && !hasBadText) {
-                return candidate;
-            }
-        }
-
-        return text.trim();
-    }
-
-    private String extractAfterLastMarker(String text, String marker) {
-        if (text.contains(marker)) {
-            return text.substring(text.lastIndexOf(marker) + marker.length()).trim();
-        }
-
-        return text;
-    }
-
-    private String takeBestRussianSentence(String text) {
-        if (text == null || text.isBlank()) {
-            return "";
-        }
-
-        // Делим по точкам, восклицательным и вопросительным знакам
-        String[] sentences = text.split("(?<=[.!?])\\s+");
-
-        for (String sentence : sentences) {
-            String candidate = sentence.trim();
-
-            boolean hasRussian = candidate.matches(".*[А-Яа-яЁё].*");
-            boolean hasBadEnglish = candidate.toLowerCase().contains("draft")
-                    || candidate.toLowerCase().contains("tags")
-                    || candidate.toLowerCase().contains("constraints")
-                    || candidate.toLowerCase().contains("analyze")
-                    || candidate.toLowerCase().contains("question")
-                    || candidate.toLowerCase().contains("context")
-                    || candidate.toLowerCase().contains("answer");
-
-            if (hasRussian && !hasBadEnglish) {
-                return candidate;
-            }
-        }
-
-        return text.trim();
     }
 }

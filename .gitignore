@@ -3,11 +3,12 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 
+### Runtime data (uploaded documents/images) ###
+storage/documents/
+storage/images/
+
 ### IntelliJ IDEA ###
-.idea/modules.xml
-.idea/jarRepositories.xml
-.idea/compiler.xml
-.idea/libraries/
+.idea/
 *.iws
 *.iml
 *.ipr

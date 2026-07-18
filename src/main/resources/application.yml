@@ -38,7 +38,23 @@ ollama:
   embedding-model: nomic-embed-text:latest
   chat-model: qwen2.5:7b
 
+jwt:
+  secret: change-this-to-a-random-256-bit-secret-in-production-please
+  expiration-days: 7
+
 rag:
   search:
     top-k: 8
+    wiki-top-k: 12
     max-distance: 0.9
+
+telegram:
+  bot:
+    enabled: true
+    token: ${TELEGRAM_BOT_TOKEN:}
+    username: raganalyzer_bot
+    proxy:
+      enabled: true
+      type: HTTP
+      host: 127.0.0.1
+      port: 10809

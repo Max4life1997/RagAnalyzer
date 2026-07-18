@@ -74,6 +74,71 @@ public class VectorStoreService {
                 limit
         );
     }
+
+    // Wiki-режим: один глобальный поиск по ВСЕЙ библиотеке пользователя,
+    // без отдельного запроса на каждый документ — масштабируется на сотни файлов.
+    // Жёстко фильтруем по user_id прямо в SQL — это и есть граница безопасности
+    // (нельзя получить чанки чужих документов даже теоретически).
+    public List<SearchResultDto> findSimilarChunksForUser(
+            List<Double> questionEmbedding,
+            UUID userId,
+            List<UUID> documentIds,
+            int limit
+    ) {
+        String vectorValue = toPgVector(questionEmbedding);
+
+        // Если список документов не пуст — сужаем поиск до них, иначе ищем по всей библиотеке
+        boolean scoped = documentIds != null && !documentIds.isEmpty();
+        String docFilter = scoped
+                ? "AND d.id IN (%s)".formatted(
+                        documentIds.stream().map(id -> "?").collect(Collectors.joining(", ")))
+                : "";
+
+        String sql = """
+                SELECT
+                    dc.id AS chunk_id,
+                    d.id AS document_id,
+                    d.original_file_name AS file_name,
+                    dc.chunk_index,
+                    dc.page_number,
+                    dc.content,
+                    dc.embedding <=> ?::vector AS distance
+                FROM document_chunks dc
+                JOIN documents d ON d.id = dc.document_id
+                WHERE dc.embedding IS NOT NULL
+                  AND d.status = 'INDEXED'
+                  AND d.user_id = ?
+                  %s
+                ORDER BY dc.embedding <=> ?::vector
+                LIMIT ?
+                """.formatted(docFilter);
+
+        List<Object> params = new java.util.ArrayList<>();
+        params.add(vectorValue);
+        params.add(userId);
+        if (scoped) params.addAll(documentIds);
+        params.add(vectorValue);
+        params.add(limit);
+
+        return jdbcTemplate.query(
+                sql,
+                (rs, rowNum) -> {
+                    double distance = rs.getDouble("distance");
+
+                    return new SearchResultDto(
+                            rs.getObject("chunk_id", UUID.class),
+                            rs.getObject("document_id", UUID.class),
+                            rs.getString("file_name"),
+                            rs.getInt("chunk_index"),
+                            rs.getInt("page_number"),
+                            rs.getString("content"),
+                            distance,
+                            1.0 - distance
+                    );
+                },
+                params.toArray()
+        );
+    }
     private String toPgVector(List<Double> embedding) {
         return embedding.stream()
                 .map(String::valueOf)
